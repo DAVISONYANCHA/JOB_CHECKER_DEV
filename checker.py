@@ -15,8 +15,11 @@ from playwright.sync_api import sync_playwright
 import traceback
 from email.message import EmailMessage
 import requests
+from flask import Flask
+import threading
+import undetected_chromedriver as uc
 
-# Set up logging
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -26,6 +29,9 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Constants
+LOCK_FILE = "job_checker.lock"
 
 # Load environment variables
 load_dotenv()
@@ -42,7 +48,6 @@ print("DEBUG TELEGRAM_BOT_TOKEN:", TELEGRAM_BOT_TOKEN)
 
 JOBS_FILE = "jobs_seen.json"
 RECIPIENTS_FILE = "recipients.json"
-LOCK_FILE = "job_checker.lock"
 STATE_FILE = "job_checker_state.json"
 CHECK_INTERVAL = 300  # 5 minutes in seconds
 
@@ -165,216 +170,199 @@ def inspect_job_row(page, row):
         logger.error(f"Error inspecting job row: {str(e)}")
         return None
 
-def scrape_jobs_detailed(page=None, headless=True):
+def scrape_jobs_detailed(headless=True):
     """Scrape job details from the website including links."""
     jobs = {}
     try:
-        if page is None:
-            with sync_playwright() as p:
-                # Launch browser with anti-detection measures
-                logger.info(f"Launching browser in {'headless' if headless else 'visible'} mode...")
-                browser = p.chromium.launch(
-                    headless=headless,
-                    args=[
-                        '--disable-gpu',
-                        '--no-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--disable-blink-features=AutomationControlled'
-                    ]
-                )
+        with sync_playwright() as p:
+            # Launch browser with anti-detection measures
+            logger.info(f"Launching browser in {'headless' if headless else 'visible'} mode...")
+            browser = p.chromium.launch(
+                headless=headless,
+                args=[
+                    '--disable-gpu',
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-blink-features=AutomationControlled'
+                ]
+            )
+            
+            # Create a more realistic browser context
+            context = browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                locale='en-GB',
+                timezone_id='Europe/London',
+                geolocation={'latitude': 51.5074, 'longitude': -0.1278},  # London coordinates
+                permissions=['geolocation']
+            )
+            
+            # Add stealth scripts
+            page = context.new_page()
+            page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            """)
+            
+            # Set longer timeouts
+            page.set_default_timeout(90000)  # 90 seconds
+            page.set_default_navigation_timeout(90000)
+            
+            try:
+                # Login with human-like behavior
+                logger.info("Attempting to log in...")
+                page.goto('https://splendid.onsinch.com/', wait_until='networkidle')
+                random_delay()
                 
-                # Create a more realistic browser context
-                context = browser.new_context(
-                    viewport={'width': 1920, 'height': 1080},
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    locale='en-GB',
-                    timezone_id='Europe/London',
-                    geolocation={'latitude': 51.5074, 'longitude': -0.1278},  # London coordinates
-                    permissions=['geolocation']
-                )
+                # Fill email and password fields
+                page.fill('#UserEmail', USERNAME)
+                page.fill('#UserPassword', PASSWORD)
+                random_delay()
+
+                # Click the login button
+                page.click('[data-cy="sign-in-btn"]')
+                random_delay()
                 
-                # Add stealth scripts
-                page = context.new_page()
-                page.add_init_script("""
-                    Object.defineProperty(navigator, 'webdriver', {
-                        get: () => undefined
-                    });
+                page.wait_for_load_state('networkidle')
+                logger.info("Login successful")
+                random_delay()
+                
+                # Navigate to jobs page with human-like behavior
+                logger.info("Navigating to jobs page...")
+                page.goto('https://splendid.onsinch.com/react/position?ignoreRating=true', wait_until='networkidle')
+                logger.info("Jobs page loaded")
+                random_delay()
+                
+                # Scroll the page like a human
+                page.evaluate("""
+                    () => {
+                        return new Promise((resolve) => {
+                            let totalHeight = 0;
+                            const distance = 100;
+                            const timer = setInterval(() => {
+                                const scrollHeight = document.body.scrollHeight;
+                                window.scrollBy(0, distance);
+                                totalHeight += distance;
+                                
+                                if(totalHeight >= scrollHeight){
+                                    clearInterval(timer);
+                                    resolve();
+                                }
+                            }, 100);
+                        });
+                    }
+                """)
+                random_delay()
+                
+                # Get all job rows and their data in one go
+                logger.info("Collecting job data...")
+                job_data = page.evaluate("""
+                    () => {
+                        const rows = Array.from(document.querySelectorAll('tr.MuiTableRow-root.MuiTableRow-hover'));
+                        return rows.map(row => {
+                            const cells = Array.from(row.querySelectorAll('td'));
+                            if (cells.length >= 6) {
+                                return {
+                                    title: cells[0].innerText.trim(),
+                                    date: cells[1].innerText.trim(),
+                                    time: cells[2].innerText.trim(),
+                                    location: cells[3].innerText.trim(),
+                                    profession: cells[4].innerText.trim(),
+                                    occupancy: cells[5].innerText.trim()
+                                };
+                            }
+                            return null;
+                        }).filter(Boolean);
+                    }
                 """)
                 
-                # Set longer timeouts
-                page.set_default_timeout(90000)  # 90 seconds
-                page.set_default_navigation_timeout(90000)
+                logger.info(f"Found {len(job_data)} jobs")
                 
-                try:
-                    # Login with human-like behavior
-                    logger.info("Attempting to log in...")
-                    page.goto('https://splendid.onsinch.com/', wait_until='networkidle')
-                    random_delay()
-                    
-                    # Fill email and password fields
-                    page.fill('#UserEmail', USERNAME)
-                    page.fill('#UserPassword', PASSWORD)
-                    random_delay()
-
-                    # Click the login button
-                    page.click('[data-cy="sign-in-btn"]')
-                    random_delay()
-                    
-                    page.wait_for_load_state('networkidle')
-                    logger.info("Login successful")
-                    random_delay()
-                    
-                    # Navigate to jobs page with human-like behavior
-                    logger.info("Navigating to jobs page...")
-                    page.goto('https://splendid.onsinch.com/react/position', wait_until='networkidle')
-                    logger.info("Jobs page loaded")
-                    random_delay()
-                    
-                    # Scroll the page like a human
-                    page.evaluate("""
-                        () => {
-                            return new Promise((resolve) => {
-                                let totalHeight = 0;
-                                const distance = 100;
-                                const timer = setInterval(() => {
-                                    const scrollHeight = document.body.scrollHeight;
-                                    window.scrollBy(0, distance);
-                                    totalHeight += distance;
-                                    
-                                    if(totalHeight >= scrollHeight){
-                                        clearInterval(timer);
-                                        resolve();
-                                    }
-                                }, 100);
-                            });
-                        }
-                    """)
-                    random_delay()
-                    
-                    # Wait for job rows to be visible
-                    logger.info("Waiting for job rows...")
-                    page.wait_for_selector('tr.MuiTableRow-root.MuiTableRow-hover', timeout=90000)
-
-                    # Get all job rows
-                    job_rows = page.query_selector_all('tr.MuiTableRow-root.MuiTableRow-hover')
-                    logger.info(f"Found {len(job_rows)} job rows")
-
-                    for row in job_rows:
-                        try:
-                            cells = row.query_selector_all('td')
-                            if len(cells) < 6:
-                                continue  # skip if not enough columns
-
-                            title = cells[0].inner_text().strip()
-                            date = cells[1].inner_text().strip()
-                            time_ = cells[2].inner_text().strip()
-                            location = cells[3].inner_text().strip()
-                            profession = cells[4].inner_text().strip()
-                            occupancy = cells[5].inner_text().strip()
-
-                            job_key = f"{title}\n{date}\n{time_}\n{location}\n{profession}\n{occupancy}"
-                            jobs[job_key] = {
-                                'title': title,
-                                'date': date,
-                                'time': time_,
-                                'location': location,
-                                'profession': profession,
-                                'occupancy': occupancy,
-                                'available': True
-                            }
-                        except Exception as e:
-                            logger.error(f"Error processing job row: {str(e)}")
-                            continue
-                    
-                except Exception as e:
-                    logger.error(f"Error during page navigation: {str(e)}")
-                    # Take a screenshot for debugging
+                # Load seen jobs for comparison
+                seen_jobs = load_seen_jobs()
+                logger.info(f"Loaded {len(seen_jobs)} previously seen jobs")
+                
+                # Process the collected data
+                for job in job_data:
                     try:
-                        page.screenshot(path='error_screenshot.png')
-                        logger.info("Error screenshot saved as error_screenshot.png")
-                    except:
-                        pass
-                finally:
-                    context.close()
-                    browser.close()
-        else:
-            # Use existing page to get job details
-            job_rows = page.query_selector_all('tr.MuiTableRow-root.MuiTableRow-hover')
-            logger.info(f"Found {len(job_rows)} job rows")
-
-            for row in job_rows:
-                try:
-                    cells = row.query_selector_all('td')
-                    if len(cells) < 6:
-                        continue  # skip if not enough columns
-
-                    title = cells[0].inner_text().strip()
-                    date = cells[1].inner_text().strip()
-                    time_ = cells[2].inner_text().strip()
-                    location = cells[3].inner_text().strip()
-                    profession = cells[4].inner_text().strip()
-                    occupancy = cells[5].inner_text().strip()
-
-                    job_key = f"{title}\n{date}\n{time_}\n{location}\n{profession}\n{occupancy}"
-                    jobs[job_key] = {
-                        'title': title,
-                        'date': date,
-                        'time': time_,
-                        'location': location,
-                        'profession': profession,
-                        'occupancy': occupancy,
-                        'available': True
-                    }
-                except Exception as e:
-                    logger.error(f"Error processing job row: {str(e)}")
-                    continue
-            
+                        key = f"{job['title']}\n{job['date']}\n{job['time']}\n{job['location']}\n{job['profession']}\n{job['occupancy']}"
+                        info = {
+                            'title': job['title'],
+                            'date': job['date'],
+                            'time': job['time'],
+                            'location': job['location'],
+                            'profession': job['profession'],
+                            'occupancy': job['occupancy'],
+                            'link': None,  # Will be set only for new jobs
+                            'locked': 'locked' in job['occupancy'].lower(),
+                            'filled': None,
+                            'capacity': None
+                        }
+                        
+                        # Parse filled/capacity if available
+                        if '/' in job['occupancy']:
+                            try:
+                                filled, capacity = job['occupancy'].split('/')
+                                info['filled'] = int(filled.strip())
+                                info['capacity'] = int(capacity.strip())
+                            except:
+                                pass
+                        
+                        # Only get link for new jobs
+                        if key not in seen_jobs:
+                            logger.info(f"Getting link for new job: {job['title']}")
+                            link = get_job_link(page, job['title'])
+                            logger.info(f"Got link for new job {job['title']}: {link}")
+                            info['link'] = link
+                        else:
+                            # For existing jobs, copy the link from seen_jobs if available
+                            info['link'] = seen_jobs[key].get('link')
+                        
+                        jobs[key] = info
+                        logger.info(f"Processed job: {job['title']}")
+                    except Exception as e:
+                        logger.error(f"Error processing job data: {str(e)}")
+                        continue
+                
+            finally:
+                # Always close the browser
+                browser.close()
+                
+        return jobs
     except Exception as e:
-        logger.error(f"Error during job scraping: {str(e)}")
-    
-    return jobs
+        logger.error(f"Error in scrape_jobs_detailed: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {}
 
-def get_job_link(page, title_cell):
-    """Get the link for a specific job by clicking its title."""
+def get_job_link(page, title):
+    """Get the link for a specific job by its title."""
     try:
-        # Click the title cell to get the link
+        # Find the row containing the job title
+        row = page.query_selector(f'//tr[.//td[contains(text(), "{title}")]]')
+        if not row:
+            logger.warning(f"Could not find row for job: {title}")
+            return None
+            
+        # Get the first cell (title cell)
+        title_cell = row.query_selector('td:first-child')
+        if not title_cell:
+            logger.warning(f"Could not find title cell for job: {title}")
+            return None
+            
+        # Click the cell to get the link
         title_cell.click()
         random_delay()
         
         # Get the current URL after clicking
-        link = page.url
-        
-        # Go back to the jobs page
-        page.goto('https://splendid.onsinch.com/react/position', wait_until='networkidle')
-        random_delay()
-        
-        # Wait for the table to be visible again
-        page.wait_for_selector('tr.MuiTableRow-root.MuiTableRow-hover', timeout=90000)
-        
-        # Scroll back to where we were
-        page.evaluate("""
-            () => {
-                return new Promise((resolve) => {
-                    let totalHeight = 0;
-                    const distance = 100;
-                    const timer = setInterval(() => {
-                        const scrollHeight = document.body.scrollHeight;
-                        window.scrollBy(0, distance);
-                        totalHeight += distance;
-                        
-                        if(totalHeight >= scrollHeight){
-                            clearInterval(timer);
-                            resolve();
-                        }
-                    }, 100);
-                });
-            }
-        """)
-        random_delay()
-        
-        return link
+        current_url = page.url
+        if 'position/' in current_url:
+            return current_url
+            
+        logger.warning(f"Could not get link for job: {title}")
+        return None
     except Exception as e:
-        logger.error(f"Error getting job link: {str(e)}")
+        logger.error(f"Error getting link for job {title}: {str(e)}")
         return None
 
 def get_job_link_via_api(page, job_id):
@@ -397,46 +385,6 @@ def get_job_link_via_api(page, job_id):
     except Exception as e:
         logger.error(f"Error getting job link via API: {str(e)}")
         return None
-
-def acquire_lock():
-    """Acquire a Windows-compatible file lock."""
-    try:
-        if os.path.exists(LOCK_FILE):
-            try:
-                # Try to open existing lock file
-                lock_file = open(LOCK_FILE, 'r+')
-            except:
-                # If can't open, assume stale and create new
-                if os.path.exists(LOCK_FILE):
-                    os.remove(LOCK_FILE)
-                lock_file = open(LOCK_FILE, 'w')
-        else:
-            lock_file = open(LOCK_FILE, 'w')
-        
-        try:
-            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
-            return lock_file
-        except:
-            lock_file.close()
-            return None
-            
-    except Exception as e:
-        logger.error(f"Error acquiring lock: {str(e)}")
-        return None
-
-def release_lock(lock_file):
-    """Release the Windows-compatible file lock."""
-    if lock_file:
-        try:
-            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-        except:
-            pass
-        lock_file.close()
-        try:
-            if os.path.exists(LOCK_FILE):
-                os.remove(LOCK_FILE)
-        except:
-            pass
 
 def get_job_hash(job_info):
     """Create a unique hash for a job based on its key information."""
@@ -819,136 +767,14 @@ logger.addHandler(error_email_handler)
 def check_jobs(headless=True):
     """Check for new jobs and send notifications."""
     try:
-        # Acquire lock to prevent multiple instances
-        if not acquire_lock():
-            logger.warning("Another instance is already running")
-            return False
-
-        try:
-            # Load current state
-            state = load_state()
-            seen_jobs = load_seen_jobs()
-            
-            # Scrape jobs
-            jobs = scrape_jobs_detailed(headless=headless)
-            logger.info(f"Loaded {len(seen_jobs)} previously seen jobs")
-            logger.info(f"Found {len(jobs)} current jobs on website")
-            
-            messages_by_type = {
-                "new": [],
-                "reopened": [],
-                "spotfreed": []
-            }
-
-            current_time = datetime.now().isoformat()
-            run_id = f"run_{current_time}"
-            
-            # Process jobs and get links
-            new_jobs_count = 0
-            for key, info in jobs.items():
-                job_hash = get_job_hash(info)
-                if not job_hash:
-                    logger.warning(f"Could not generate hash for job: {info['title']}")
-                    continue
-
-                if job_hash in state["processed_jobs"]:
-                    logger.debug(f"Skipping already processed job: {info['title']}")
-                    continue
-
-                if key not in seen_jobs:
-                    logger.info(f"Found new job: {info['title']}")
-                    new_jobs_count += 1
-                    
-                    # Get link for new jobs only
-                    job_rows = page.query_selector_all('tr.MuiTableRow-root.MuiTableRow-hover')
-                    for row in job_rows:
-                        cells = row.query_selector_all('td')
-                        if len(cells) >= 6:
-                            row_title = cells[0].inner_text().strip()
-                            if row_title == info['title']:
-                                logger.info(f"Getting link for new job: {info['title']}")
-                                link = get_job_link(page, cells[0])
-                                info['link'] = link
-                                logger.info(f"Got link for job {info['title']}: {link}")
-                                break
-                    
-                    msg = f"New shift/job: {key}"
-                    if info.get('link'):
-                        msg += f"\nLink: {info['link']}"
-                    messages_by_type["new"].append(msg)
-                    state["processed_jobs"][job_hash] = run_id
-                else:
-                    prev = seen_jobs[key]
-                    if prev.get('locked') and not info['locked']:
-                        logger.info(f"Found reopened job: {info['title']}")
-                        msg = f"Re-opened: {key}"
-                        if info.get('link'):
-                            msg += f"\nLink: {info['link']}"
-                        messages_by_type["reopened"].append(msg)
-                        state["processed_jobs"][job_hash] = run_id
-                    if (prev.get('filled') is not None and info['filled'] is not None
-                            and info['filled'] < prev['filled'] and not info['locked']):
-                        logger.info(f"Found job with freed spot: {info['title']}")
-                        msg = (f"Spot freed: {key} (was {prev['filled']}/{prev['capacity']}, now {info['filled']}/{info['capacity']})")
-                        if info.get('link'):
-                            msg += f"\nLink: {info['link']}"
-                        messages_by_type["spotfreed"].append(msg)
-                        state["processed_jobs"][job_hash] = run_id
-            
-            logger.info(f"Found {new_jobs_count} new jobs in this cycle")
-
-            if any(messages_by_type.values()):
-                logger.info("Sending notifications for:")
-                if messages_by_type["new"]:
-                    logger.info(f"- {len(messages_by_type['new'])} new jobs")
-                if messages_by_type["reopened"]:
-                    logger.info(f"- {len(messages_by_type['reopened'])} reopened jobs")
-                if messages_by_type["spotfreed"]:
-                    logger.info(f"- {len(messages_by_type['spotfreed'])} jobs with freed spots")
-                send_notifications(messages_by_type)
-            else:
-                logger.info("No updates to send")
-
-            # Update state
-            state["last_check_time"] = current_time
-            state["last_run_id"] = run_id
-            save_state(state)
-            save_seen_jobs(jobs)
-            logger.info("Job check cycle completed successfully")
-        except Exception as e:
-            logger.error(f"Error during job check cycle: {str(e)}")
-            # Send error email
-            error_message = f"Error during job check cycle: {str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-            send_error_email("Job Checker Error", error_message)
-        finally:
-            release_lock(lock_file)
-    except Exception as e:
-        logger.error(f"Error in check_jobs: {str(e)}")
-        return False
-
-def run_scheduled_checks():
-    """Run job checks on a schedule."""
-    while True:
-        try:
-            check_jobs()
-            time.sleep(CHECK_INTERVAL)
-        except KeyboardInterrupt:
-            logger.info("Scheduled checks stopped by user")
-            break
-        except Exception as e:
-            logger.error(f"Error in scheduled check: {str(e)}")
-            time.sleep(60)  # Wait a minute before retrying on error
-
-def resend_last_update(force_all=False):
-    """Resend the last job update to all recipients.
-    
-    Args:
-        force_all (bool): If True, will send all current jobs regardless of whether they're new or not.
-    """
-    try:
-        # Load the last seen jobs
-        old = load_seen_jobs()
-        new = scrape_jobs_detailed()
+        # Load current state
+        state = load_state()
+        seen_jobs = load_seen_jobs()
+        
+        # Scrape jobs and get the data
+        jobs = scrape_jobs_detailed(headless=headless)
+        logger.info(f"Loaded {len(seen_jobs)} previously seen jobs")
+        logger.info(f"Found {len(jobs)} current jobs on website")
         
         messages_by_type = {
             "new": [],
@@ -956,97 +782,87 @@ def resend_last_update(force_all=False):
             "spotfreed": []
         }
 
-        if force_all:
-            # Force all current jobs to be sent as "new"
-            for key, info in new.items():
-                msg = f"Current job: {key}"
+        current_time = datetime.now().isoformat()
+        run_id = f"run_{current_time}"
+        
+        # Process jobs
+        new_jobs_count = 0
+        for key, info in jobs.items():
+            job_hash = get_job_hash(info)
+            if not job_hash:
+                logger.warning(f"Could not generate hash for job: {info['title']}")
+                continue
+
+            if job_hash in state["processed_jobs"]:
+                logger.debug(f"Skipping already processed job: {info['title']}")
+                continue
+
+            if key not in seen_jobs:
+                logger.info(f"Found new job: {info['title']}")
+                new_jobs_count += 1
+                
+                msg = f"New shift/job: {key}"
                 if info.get('link'):
                     msg += f"\nLink: {info['link']}"
                 messages_by_type["new"].append(msg)
-        else:
-            # Process the jobs to generate messages
-            for key, info in new.items():
-                job_hash = get_job_hash(info)
-                if not job_hash:
-                    continue
-
-                if key not in old:
-                    msg = f"New shift/job: {key}"
+                state["processed_jobs"][job_hash] = run_id
+            else:
+                prev = seen_jobs[key]
+                if prev.get('locked') and not info['locked']:
+                    logger.info(f"Found reopened job: {info['title']}")
+                    msg = f"Re-opened: {key}"
                     if info.get('link'):
                         msg += f"\nLink: {info['link']}"
-                    messages_by_type["new"].append(msg)
-                else:
-                    prev = old[key]
-                    if prev.get('locked') and not info['locked']:
-                        msg = f"Re-opened: {key}"
-                        if info.get('link'):
-                            msg += f"\nLink: {info['link']}"
-                        messages_by_type["reopened"].append(msg)
-                    if (prev.get('filled') is not None and info['filled'] is not None
-                            and info['filled'] < prev['filled'] and not info['locked']):
-                        msg = (f"Spot freed: {key} (was {prev['filled']}/{prev['capacity']}, now {info['filled']}/{info['capacity']})")
-                        if info.get('link'):
-                            msg += f"\nLink: {info['link']}"
-                        messages_by_type["spotfreed"].append(msg)
+                    messages_by_type["reopened"].append(msg)
+                    state["processed_jobs"][job_hash] = run_id
+                if (prev.get('filled') is not None and info['filled'] is not None
+                        and info['filled'] < prev['filled'] and not info['locked']):
+                    logger.info(f"Found job with freed spot: {info['title']}")
+                    msg = (f"Spot freed: {key} (was {prev['filled']}/{prev['capacity']}, now {info['filled']}/{info['capacity']})")
+                    if info.get('link'):
+                        msg += f"\nLink: {info['link']}"
+                    messages_by_type["spotfreed"].append(msg)
+                    state["processed_jobs"][job_hash] = run_id
+        
+        logger.info(f"Found {new_jobs_count} new jobs in this cycle")
 
         if any(messages_by_type.values()):
-            logger.info("Resending job updates to all recipients")
+            logger.info("Sending notifications for:")
+            if messages_by_type["new"]:
+                logger.info(f"- {len(messages_by_type['new'])} new jobs")
+            if messages_by_type["reopened"]:
+                logger.info(f"- {len(messages_by_type['reopened'])} reopened jobs")
+            if messages_by_type["spotfreed"]:
+                logger.info(f"- {len(messages_by_type['spotfreed'])} jobs with freed spots")
             send_notifications(messages_by_type)
-            return True
         else:
-            logger.info("No updates to resend")
-            return False
-
+            logger.info("No updates to send")
+        
+        # Update state
+        state["last_check_time"] = current_time
+        state["last_run_id"] = run_id
+        save_state(state)
+        save_seen_jobs(jobs)
+        logger.info("Job check cycle completed successfully")
     except Exception as e:
-        logger.error(f"Error resending last update: {str(e)}")
+        logger.error(f"Error in check_jobs: {str(e)}")
+        logger.error(traceback.format_exc())
         return False
 
-def test_job_notifications():
-    """Test function to simulate finding new jobs and sending notifications."""
-    logger.info("Starting test job notification")
+def main():
+    # Initialize Flask app
+    app = Flask(__name__)
+    app.secret_key = os.urandom(24)
     
-    # Simulate finding new jobs
-    test_jobs = {
-        "Test Job 1\n2024-05-10\n10:00-18:00\nLondon\nActor\nFull": {
-            'title': 'Test Job 1',
-            'date': '2024-05-10',
-            'time': '10:00-18:00',
-            'location': 'London',
-            'profession': 'Actor',
-            'occupancy': 'Full',
-            'available': True
-        },
-        "Test Job 2\n2024-05-11\n14:00-22:00\nManchester\nDancer\nPart": {
-            'title': 'Test Job 2',
-            'date': '2024-05-11',
-            'time': '14:00-22:00',
-            'location': 'Manchester',
-            'profession': 'Dancer',
-            'occupancy': 'Part',
-            'available': True
-        }
-    }
+    # Load initial state
+    load_state()
     
-    # Create test messages
-    messages_by_type = {
-        "new": [],
-        "reopened": [],
-        "spotfreed": []
-    }
+    # Start the scheduler in a separate thread
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
     
-    # Add test jobs to new messages
-    for key, info in test_jobs.items():
-        msg = f"New shift/job: {key}"
-        messages_by_type["new"].append(msg)
-        logger.info(f"Test job added: {key}")
-    
-    # Send notifications using the same function as the real job checker
-    if any(messages_by_type.values()):
-        logger.info("Sending test notifications")
-        send_notifications(messages_by_type)
-        logger.info("Test notifications sent")
-    else:
-        logger.info("No test messages to send")
+    # Run the Flask app
+    app.run(host='0.0.0.0', port=5003, debug=True)
 
 if __name__ == "__main__":
     try:
@@ -1057,7 +873,7 @@ if __name__ == "__main__":
         else:
             # Uncomment the next line to test resending the last update
             # resend_last_update(force_all=True)  # Set to True to force resend all current jobs
-            run_scheduled_checks()
+            main()
     except KeyboardInterrupt:
         logger.info("Application stopped by user")
     except Exception as e:
