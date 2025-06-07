@@ -19,6 +19,7 @@ from checker import (
     send_email,
     send_telegram_message
 )
+from remove_recent_jobs import remove_recent_jobs
 
 # Configure logging
 logging.basicConfig(
@@ -115,12 +116,14 @@ def index():
 
 @app.route('/recipients')
 def recipients():
+    """Display and manage recipients."""
     try:
-        recipients = get_recipients()
-        return render_template('recipients.html', recipients=recipients)
+        recipients_list = get_recipients()
+        return render_template('recipients.html', recipients=recipients_list)
     except Exception as e:
         logger.error(f"Error in recipients route: {str(e)}")
-        return render_template('500.html', error=str(e)), 500
+        flash('Error loading recipients', 'error')
+        return redirect(url_for('index'))
 
 @app.route('/edit_recipient/<email>', methods=['GET', 'POST'])
 def edit_recipient_route(email):
@@ -195,26 +198,18 @@ def add_recipient_route():
         flash('An error occurred while adding the recipient.', 'error')
         return redirect(url_for('recipients'))
 
-@app.route('/remove_recipient/<email>')
+@app.route('/remove_recipient/<email>', methods=['POST'])
 def remove_recipient_route(email):
+    """Remove a recipient."""
     try:
         success = remove_recipient(email)
         if success:
-            return jsonify({
-                'status': 'success',
-                'message': 'Recipient removed successfully'
-            })
+            return jsonify({'status': 'success', 'message': 'Recipient removed successfully'})
         else:
-            return jsonify({
-                'status': 'error',
-                'message': 'Recipient not found or could not be removed'
-            }), 404
+            return jsonify({'status': 'error', 'message': 'Failed to remove recipient'}), 400
     except Exception as e:
-        logger.error(f"Error in remove_recipient route: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+        logger.error(f"Error in remove_recipient_route: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/run_check')
 def run_check_route():
@@ -346,6 +341,64 @@ def toggle_job_links_route(email):
             'status': 'error',
             'message': str(e)
         }), 500
+
+@app.route('/remove_jobs', methods=['POST'])
+def remove_jobs_route():
+    try:
+        num_jobs = int(request.form.get('num_jobs', 1))
+        if num_jobs <= 0:
+            flash('Please enter a positive number of jobs to remove.', 'error')
+            return redirect(url_for('index'))
+        
+        success = remove_recent_jobs(num_jobs)
+        if success:
+            flash(f'Successfully removed {num_jobs} most recent jobs.', 'success')
+        else:
+            flash('Failed to remove jobs. Check the logs for details.', 'error')
+        
+        return redirect(url_for('index'))
+    except ValueError:
+        flash('Please enter a valid number.', 'error')
+        return redirect(url_for('index'))
+    except Exception as e:
+        logger.error(f"Error in remove_jobs_route: {str(e)}")
+        flash('An error occurred while removing jobs.', 'error')
+        return redirect(url_for('index'))
+
+@app.route('/test_telegram/<email>', methods=['POST'])
+def test_telegram_route(email):
+    """Test Telegram notifications for a specific recipient."""
+    try:
+        recipients = get_recipients()
+        recipient = next((r for r in recipients if r['email'] == email), None)
+        
+        if not recipient:
+            flash('Recipient not found', 'error')
+            return jsonify({'status': 'error', 'message': 'Recipient not found'})
+        
+        if not recipient.get('use_telegram'):
+            flash('Telegram notifications not enabled for this recipient', 'error')
+            return jsonify({'status': 'error', 'message': 'Telegram notifications not enabled'})
+        
+        if not recipient.get('telegram_id'):
+            flash('No Telegram ID configured for this recipient', 'error')
+            return jsonify({'status': 'error', 'message': 'No Telegram ID configured'})
+        
+        # Send a test message
+        test_message = "🔔 Test Notification\n\nThis is a test message from your Job Checker bot. If you receive this, your Telegram notifications are working correctly!"
+        success = send_telegram_message(recipient['telegram_id'], test_message)
+        
+        if success:
+            flash('Test Telegram message sent successfully', 'success')
+            return jsonify({'status': 'success', 'message': 'Test message sent successfully'})
+        else:
+            flash('Failed to send test Telegram message', 'error')
+            return jsonify({'status': 'error', 'message': 'Failed to send test message'})
+            
+    except Exception as e:
+        logger.error(f"Error in test_telegram_route: {str(e)}")
+        flash('Error sending test message', 'error')
+        return jsonify({'status': 'error', 'message': str(e)})
 
 @app.errorhandler(404)
 def not_found_error(error):

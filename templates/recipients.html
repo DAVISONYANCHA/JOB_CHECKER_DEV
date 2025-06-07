@@ -139,19 +139,21 @@
                                 <div class="form-check form-switch">
                                     <input class="form-check-input job-links-toggle" type="checkbox"
                                            data-email="{{ recipient.email }}"
-                                           {% if recipient.get('receive_job_links', True) %}checked{% endif %}>
+                                           {% if recipient.receive_job_links %}checked{% endif %}>
                                     <label class="form-check-label">Job Links</label>
                                 </div>
                             </td>
                             <td>
                                 <div class="btn-group">
-                                    <button class="btn btn-sm btn-warning" onclick="testRecipient('{{ recipient.email }}')">
-                                        <i class="fas fa-bell"></i>
+                                    {% if recipient.use_telegram %}
+                                    <button class="btn btn-sm btn-info" onclick="testTelegram('{{ recipient.email }}')" title="Test Telegram">
+                                        <i class="fab fa-telegram"></i>
                                     </button>
-                                    <a href="{{ url_for('edit_recipient_route', email=recipient.email) }}" class="btn btn-sm btn-primary">
+                                    {% endif %}
+                                    <a href="{{ url_for('edit_recipient_route', email=recipient.email) }}" class="btn btn-sm btn-primary" title="Edit">
                                         <i class="fas fa-edit"></i>
                                     </a>
-                                    <button class="btn btn-sm btn-danger" onclick="handleRemoveRecipient('{{ recipient.email }}')">
+                                    <button class="btn btn-sm btn-danger" onclick="handleRemoveRecipient('{{ recipient.email }}')" title="Delete">
                                         <i class="fas fa-trash"></i>
                                     </button>
                                 </div>
@@ -227,7 +229,13 @@ async function handleRemoveRecipient(email) {
     }
 
     try {
-        const response = await fetch(`{{ url_for('remove_recipient_route', email='') }}${email}`);
+        const response = await fetch(`/remove_recipient/${email}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        });
         const data = await response.json();
 
         if (response.ok && data.status === 'success') {
@@ -324,19 +332,21 @@ async function updateRecipientsTable() {
                     <div class="form-check form-switch">
                         <input class="form-check-input job-links-toggle" type="checkbox"
                                data-email="${recipient.email}"
-                               ${recipient.get('receive_job_links', true) ? 'checked' : ''}>
+                               ${recipient.receive_job_links ? 'checked' : ''}>
                         <label class="form-check-label">Job Links</label>
                     </div>
                 </td>
                 <td>
                     <div class="btn-group">
-                        <button class="btn btn-sm btn-warning" onclick="testRecipient('${recipient.email}')">
-                            <i class="fas fa-bell"></i>
+                        ${recipient.use_telegram ? `
+                        <button class="btn btn-sm btn-info" onclick="testTelegram('${recipient.email}')" title="Test Telegram">
+                            <i class="fab fa-telegram"></i>
                         </button>
-                        <a href="{{ url_for('edit_recipient_route', email='') }}${recipient.email}" class="btn btn-sm btn-primary">
+                        ` : ''}
+                        <a href="/edit_recipient/${recipient.email}" class="btn btn-sm btn-primary" title="Edit">
                             <i class="fas fa-edit"></i>
                         </a>
-                        <button class="btn btn-sm btn-danger" onclick="handleRemoveRecipient('${recipient.email}')">
+                        <button class="btn btn-sm btn-danger" onclick="handleRemoveRecipient('${recipient.email}')" title="Delete">
                             <i class="fas fa-trash"></i>
                         </button>
                     </div>
@@ -354,7 +364,7 @@ async function updateRecipientsTable() {
 // Toggle Handlers
 async function handleJobLinksToggle(email, shouldReceive) {
     try {
-        const response = await fetch(`{{ url_for('toggle_job_links_route', email='') }}${email}`, {
+        const response = await fetch(`/toggle_job_links/${email}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -390,6 +400,32 @@ function attachToggleListeners() {
 document.addEventListener('DOMContentLoaded', () => {
     attachToggleListeners();
 });
+
+function testTelegram(email) {
+    if (!confirm('Send a test Telegram message to ' + email + '?')) {
+        return;
+    }
+    
+    fetch(`/test_telegram/${email}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            showAlert('Test Telegram message sent successfully!', 'success');
+        } else {
+            showAlert('Error: ' + data.message, 'danger');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showAlert('Error sending test message. Please try again.', 'danger');
+    });
+}
 </script>
 {% endblock %}
 

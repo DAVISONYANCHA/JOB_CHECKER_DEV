@@ -666,6 +666,10 @@ def send_whatsapp_message(to_number, message):
 
 def send_telegram_message(chat_id, message):
     """Send a message using Telegram bot."""
+    logger.info(f"Starting Telegram message send attempt...")
+    logger.info(f"TELEGRAM_BOT_TOKEN present: {'Yes' if TELEGRAM_BOT_TOKEN else 'No'}")
+    logger.info(f"TELEGRAM_BOT_TOKEN length: {len(TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else 0}")
+    
     if not TELEGRAM_BOT_TOKEN:
         logger.error("Telegram bot token not configured")
         return False
@@ -673,12 +677,11 @@ def send_telegram_message(chat_id, message):
     try:
         # Clean up chat_id - remove any spaces or special characters
         chat_id = str(chat_id).strip()
-        
-        # Log the attempt
-        logger.info(f"Attempting to send Telegram message to chat_id: {chat_id}")
+        logger.info(f"Cleaned chat_id: {chat_id}")
         
         # Telegram API endpoint
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        logger.info(f"Using API endpoint: {url}")
         
         # Prepare the message
         data = {
@@ -686,10 +689,14 @@ def send_telegram_message(chat_id, message):
             "text": message,
             "parse_mode": "HTML"  # Allows basic HTML formatting
         }
+        logger.info(f"Prepared message data: {json.dumps(data, indent=2)}")
         
         # Send the message
+        logger.info("Sending request to Telegram API...")
         response = requests.post(url, json=data)
+        logger.info(f"Response status code: {response.status_code}")
         response_data = response.json()
+        logger.info(f"Response data: {json.dumps(response_data, indent=2)}")
         
         if response.status_code == 200 and response_data.get('ok'):
             logger.info(f"Telegram message sent successfully to {chat_id}")
@@ -711,11 +718,14 @@ def send_telegram_message(chat_id, message):
                 logger.error("The user has blocked the bot. They need to unblock it first.")
             elif "chat_id is empty" in error_msg.lower():
                 logger.error("The chat ID is empty. Please provide a valid chat ID.")
+            elif "unauthorized" in error_msg.lower():
+                logger.error("The bot token is invalid or unauthorized. Please check your TELEGRAM_BOT_TOKEN.")
             
             return False
             
     except Exception as e:
         logger.error(f"Error sending Telegram message: {str(e)}")
+        logger.error(f"Full error details: {traceback.format_exc()}")
         return False
 
 def send_email(to_email, subject, message):

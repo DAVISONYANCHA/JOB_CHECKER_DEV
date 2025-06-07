@@ -1,27 +1,24 @@
 [
   {
     "email": "donyancha90@gmail.com",
-    "telegram_chat_id": "7573095160",
+    "telegram_id": "7573095160",
     "notify_new": true,
     "notify_reopened": true,
     "notify_spotfreed": true,
     "use_telegram": true,
     "use_email": true,
     "delay": 0,
-    "receive_ngrok_url": false,
     "receive_job_links": true
   },
   {
     "email": "sspot1447@gmail.com",
-    "telegram_chat_id": "",
-    "delay": 5,
+    "telegram_id": "",
+    "delay": 0,
     "notify_new": true,
     "notify_reopened": true,
     "notify_spotfreed": false,
     "use_telegram": false,
     "use_email": true,
-    "receive_ngrok_url": true,
-    "receive_job_links": false,
-    "telegram_id": ""
+    "receive_job_links": false
   }
 ]
