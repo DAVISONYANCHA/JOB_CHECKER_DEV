@@ -22,7 +22,7 @@ import undetected_chromedriver as uc
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('job_checker.log'),
         logging.StreamHandler()
@@ -53,6 +53,27 @@ CHECK_INTERVAL = 300  # 5 minutes in seconds
 
 # Add this function to send error emails
 ERROR_EMAIL = "dalaw254@gmail.com"
+
+def load_json_file(file_path):
+    """Load data from a JSON file."""
+    try:
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return {}
+    except Exception as e:
+        logger.error(f"Error loading JSON file {file_path}: {str(e)}")
+        return {}
+
+def save_json_file(file_path, data):
+    """Save data to a JSON file."""
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4)
+        return True
+    except Exception as e:
+        logger.error(f"Error saving JSON file {file_path}: {str(e)}")
+        return False
 
 def random_delay():
     """Add a random delay between actions."""
@@ -304,7 +325,7 @@ def scrape_jobs_detailed(headless=True):
                 logger.info(f"Found {len(job_data)} jobs")
                 
                 # Load seen jobs for comparison
-                seen_jobs = load_seen_jobs()
+                seen_jobs = load_json_file(JOBS_FILE)
                 logger.info(f"Loaded {len(seen_jobs)} previously seen jobs")
                 
                 # Process the collected data
@@ -514,71 +535,106 @@ def get_recipients():
         logger.error(f"Error loading recipients: {str(e)}")
         return []
 
-def add_recipient(email, telegram_chat_id='', delay=0, notify_new=True, notify_reopened=True, notify_spotfreed=True, use_telegram=False, use_email=True, receive_ngrok_url=True, receive_job_links=True):
-    """Add a new recipient to the recipients list."""
+def add_recipient(email, telegram_id=None, delay=0, notify_new=True, notify_reopened=True,
+                 notify_spotfreed=True, use_telegram=False, use_email=True, receive_job_links=True):
     try:
         recipients = get_recipients()
+        
         # Check if email already exists
         if any(r['email'] == email for r in recipients):
-            logger.warning(f"Email {email} already exists in recipients")
+            logger.warning(f"Recipient with email {email} already exists")
             return False
-        # Create new recipient with all fields
-        new_recipient = {
+        
+        # Add new recipient
+        recipients.append({
             'email': email,
-            'telegram_chat_id': telegram_chat_id,
+            'telegram_id': telegram_id,
             'delay': delay,
             'notify_new': notify_new,
             'notify_reopened': notify_reopened,
             'notify_spotfreed': notify_spotfreed,
             'use_telegram': use_telegram,
             'use_email': use_email,
-            'receive_ngrok_url': receive_ngrok_url,
             'receive_job_links': receive_job_links
-        }
-        recipients.append(new_recipient)
+        })
+        
         with open(RECIPIENTS_FILE, 'w') as f:
             json.dump(recipients, f, indent=2)
         logger.info(f"Added new recipient: {email}")
         return True
+        
     except Exception as e:
         logger.error(f"Error adding recipient: {str(e)}")
         return False
 
 def remove_recipient(email):
     """Remove a recipient."""
-    recipients = get_recipients()
-    recipients = [r for r in recipients if r["email"] != email]
-    try:
-        with open(RECIPIENTS_FILE, 'w') as f:
-            json.dump(recipients, f, indent=2)
-    except Exception as e:
-        logger.error(f"Error saving recipients: {str(e)}")
-
-def update_recipient(email, telegram_chat_id='', delay=0, notify_new=True, notify_reopened=True, notify_spotfreed=True, use_telegram=False, use_email=True, receive_ngrok_url=True, receive_job_links=True):
-    """Update an existing recipient's settings"""
     try:
         recipients = get_recipients()
+        original_count = len(recipients)
+        recipients = [r for r in recipients if r["email"] != email]
+        
+        if len(recipients) == original_count:
+            logger.warning(f"Recipient not found: {email}")
+            return False
+            
+        with open(RECIPIENTS_FILE, 'w') as f:
+            json.dump(recipients, f, indent=2)
+        logger.info(f"Removed recipient: {email}")
+        return True
+    except Exception as e:
+        logger.error(f"Error removing recipient {email}: {str(e)}")
+        return False
+
+def update_recipient(email, telegram_id=None, delay=0, notify_new=True, notify_reopened=True,
+                    notify_spotfreed=True, use_telegram=False, use_email=True, receive_job_links=True):
+    try:
+        recipients = get_recipients()
+        
+        # Find and update recipient
         for recipient in recipients:
             if recipient['email'] == email:
                 recipient.update({
-                    'telegram_chat_id': telegram_chat_id,
+                    'telegram_id': telegram_id,
                     'delay': delay,
                     'notify_new': notify_new,
                     'notify_reopened': notify_reopened,
                     'notify_spotfreed': notify_spotfreed,
                     'use_telegram': use_telegram,
                     'use_email': use_email,
-                    'receive_ngrok_url': receive_ngrok_url,
                     'receive_job_links': receive_job_links
                 })
                 with open(RECIPIENTS_FILE, 'w') as f:
                     json.dump(recipients, f, indent=2)
                 logger.info(f"Updated recipient: {email}")
                 return True
+        
         logger.warning(f"Recipient not found: {email}")
         return False
+        
     except Exception as e:
-        logger.error(f"Error updating recipient {email}: {str(e)}")
+        logger.error(f"Error updating recipient: {str(e)}")
+        return False
+
+def toggle_job_links(email, should_receive):
+    """Toggle whether a recipient should receive job links in notifications."""
+    try:
+        recipients = get_recipients()
+        
+        # Find and update recipient
+        for recipient in recipients:
+            if recipient['email'] == email:
+                recipient['receive_job_links'] = should_receive
+                with open(RECIPIENTS_FILE, 'w') as f:
+                    json.dump(recipients, f, indent=2)
+                logger.info(f"Updated job links preference for {email}: {should_receive}")
+                return True
+        
+        logger.warning(f"Recipient not found: {email}")
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error toggling job links for {email}: {str(e)}")
         return False
 
 def send_whatsapp_message(to_number, message):
@@ -697,98 +753,99 @@ def send_email(to_email, subject, message):
 
 def send_notifications(updates):
     """Send notifications to recipients."""
-    recipients = get_recipients()
-    logger.info(f"Found {len(recipients)} recipients to notify")
-    
-    for recipient in recipients:
-        # Debug log to show recipient settings
-        logger.info(f"Recipient settings for {recipient['email']}:")
-        logger.info(f"  use_email: {recipient.get('use_email', True)}")
-        logger.info(f"  use_telegram: {recipient.get('use_telegram', False)}")
-        logger.info(f"  notify_new: {recipient.get('notify_new', True)}")
-        logger.info(f"  notify_reopened: {recipient.get('notify_reopened', True)}")
-        logger.info(f"  notify_spotfreed: {recipient.get('notify_spotfreed', True)}")
-        
-        # Check if any notification methods are enabled
-        use_email = recipient.get('use_email', True)  # Default to True if not specified
-        use_telegram = recipient.get('use_telegram', False)
-        
-        if not (use_email or use_telegram):
-            logger.info(f"Skipping {recipient['email']} - no notification methods enabled")
-            continue
-        
-        # Prepare messages based on preferences
-        messages = {}
-        if recipient.get('notify_new', True) and updates.get('new'):
-            messages['new'] = updates['new']
-        if recipient.get('notify_reopened', True) and updates.get('reopened'):
-            messages['reopened'] = updates['reopened']
-        if recipient.get('notify_spotfreed', True) and updates.get('spotfreed'):
-            messages['spotfreed'] = updates['spotfreed']
-        
-        if not messages:
-            logger.info(f"No messages to send to {recipient['email']}")
-            continue
-        
-        logger.info(f"Preparing to send notifications to {recipient['email']}")
-        
-        # Build notification message
-        message_parts = []
-        
-        # Add new jobs
-        if messages.get('new'):
-            emoji = random.choice(['🎉', '✨', '🌟', '🎊', '🎯'])
-            message_parts.append(f"\n{emoji} New Jobs Available {emoji}")
-            message_parts.extend(messages['new'])
-        
-        # Add reopened jobs
-        if messages.get('reopened'):
-            emoji = random.choice(['🔄', '📢', '🔔', '🎪', '🎭'])
-            message_parts.append(f"\n{emoji} Reopened Jobs {emoji}")
-            message_parts.extend(messages['reopened'])
-        
-        # Add freed spots
-        if messages.get('spotfreed'):
-            emoji = random.choice(['🎪', '🎭', '🎨', '🎬', '🎪'])
-            message_parts.append(f"\n{emoji} Spots Freed Up {emoji}")
-            message_parts.extend(messages['spotfreed'])
-        
-        # Add a random quote at the end
-        quotes = [
-            "The show must go on! 🎭",
-            "Break a leg! 🎪",
-            "Curtain up! 🎬",
-            "Lights, camera, action! 🎥",
-            "Time to shine! ✨",
-            "Your stage awaits! 🎭",
-            "Make it count! 🎯",
-            "Show time! 🎪",
-            "Ready for your close-up! 🎬",
-            "Let's make some magic! ✨"
-        ]
-        message_parts.append(f"\n\n{random.choice(quotes)}")
-        
-        message_body = "\n".join(message_parts)
-        
-        # Apply delay if specified
-        delay = recipient.get('delay', 0)
-        if delay > 0:
-            logger.info(f"Delaying notifications for {recipient['email']} by {delay} minutes")
-            time.sleep(delay * 60)  # Convert minutes to seconds
-        
-        # Send email if enabled
-        if use_email:
-            logger.info(f"Attempting to send email to {recipient['email']}")
-            email_sent = send_email(recipient['email'], "Job Updates", message_body)
-            if not email_sent:
-                logger.error(f"Failed to send email to {recipient['email']}")
-        
-        # Send Telegram if enabled and chat_id provided
-        if use_telegram and recipient.get('telegram_chat_id'):
-            logger.info(f"Attempting to send Telegram message to {recipient['telegram_chat_id']}")
-            telegram_sent = send_telegram_message(recipient['telegram_chat_id'], message_body)
-            if not telegram_sent:
-                logger.error(f"Failed to send Telegram message to {recipient['telegram_chat_id']}")
+    try:
+        recipients = get_recipients()
+        if not recipients:
+            logger.warning("No recipients configured")
+            return
+
+        for recipient in recipients:
+            # Skip if no notification channels are enabled
+            if not recipient.get('use_email', True) and not recipient.get('use_telegram', False):
+                continue
+
+            # Skip if no notification types are enabled
+            if not any([
+                recipient.get('notify_new', True) and updates.get('new'),
+                recipient.get('notify_reopened', True) and updates.get('reopened'),
+                recipient.get('notify_spotfreed', True) and updates.get('spotfreed')
+            ]):
+                continue
+
+            use_email = recipient.get('use_email', True)
+            use_telegram = recipient.get('use_telegram', False)
+            receive_job_links = recipient.get('receive_job_links', True)
+
+            # Prepare message parts
+            message_parts = []
+            
+            # Add new jobs
+            if updates.get('new') and recipient.get('notify_new', True):
+                emoji = random.choice(['🎉', '✨', '🌟', '🎊', '🎯'])
+                message_parts.append(f"\n{emoji} New Jobs Available {emoji}")
+                for msg in updates['new']:
+                    if not receive_job_links and 'Link:' in msg:
+                        msg = msg.split('\nLink:')[0]
+                    message_parts.append(msg)
+            
+            # Add reopened jobs
+            if updates.get('reopened') and recipient.get('notify_reopened', True):
+                emoji = random.choice(['🔄', '📢', '🔔', '🎪', '🎭'])
+                message_parts.append(f"\n{emoji} Reopened Jobs {emoji}")
+                for msg in updates['reopened']:
+                    if not receive_job_links and 'Link:' in msg:
+                        msg = msg.split('\nLink:')[0]
+                    message_parts.append(msg)
+            
+            # Add freed spots
+            if updates.get('spotfreed') and recipient.get('notify_spotfreed', True):
+                emoji = random.choice(['🎪', '🎭', '🎨', '🎬', '🎪'])
+                message_parts.append(f"\n{emoji} Spots Freed Up {emoji}")
+                for msg in updates['spotfreed']:
+                    if not receive_job_links and 'Link:' in msg:
+                        msg = msg.split('\nLink:')[0]
+                    message_parts.append(msg)
+            
+            # Add a random quote at the end
+            quotes = [
+                "The show must go on! 🎭",
+                "Break a leg! 🎪",
+                "Curtain up! 🎬",
+                "Lights, camera, action! 🎥",
+                "Time to shine! ✨",
+                "Your stage awaits! 🎭",
+                "Make it count! 🎯",
+                "Show time! 🎪",
+                "Ready for your close-up! 🎬",
+                "Let's make some magic! ✨"
+            ]
+            message_parts.append(f"\n\n{random.choice(quotes)}")
+            
+            message_body = "\n".join(message_parts)
+            
+            # Apply delay if specified
+            delay = recipient.get('delay', 0)
+            if delay > 0:
+                logger.info(f"Delaying notifications for {recipient['email']} by {delay} minutes")
+                time.sleep(delay * 60)  # Convert minutes to seconds
+            
+            # Send email if enabled
+            if use_email:
+                logger.info(f"Attempting to send email to {recipient['email']}")
+                email_sent = send_email(recipient['email'], "Job Updates", message_body)
+                if not email_sent:
+                    logger.error(f"Failed to send email to {recipient['email']}")
+            
+            # Send Telegram message if enabled
+            if use_telegram and recipient.get('telegram_id'):
+                logger.info(f"Attempting to send Telegram message to {recipient['telegram_id']}")
+                telegram_sent = send_telegram_message(recipient['telegram_id'], message_body)
+                if not telegram_sent:
+                    logger.error(f"Failed to send Telegram message to {recipient['telegram_id']}")
+
+    except Exception as e:
+        logger.error(f"Error sending notifications: {str(e)}")
+        logger.error(traceback.format_exc())
 
 def send_error_email(subject, message):
     """Send error notifications using direct SMTP sending."""
@@ -834,7 +891,7 @@ def check_jobs(headless=True):
     try:
         # Load current state
         state = load_state()
-        seen_jobs = load_seen_jobs()
+        seen_jobs = load_json_file(JOBS_FILE)
         
         # Scrape jobs and get the data
         jobs = scrape_jobs_detailed(headless=headless)
@@ -913,6 +970,16 @@ def check_jobs(headless=True):
         logger.error(f"Error in check_jobs: {str(e)}")
         logger.error(traceback.format_exc())
         return False
+
+def get_last_check_time():
+    """Get the timestamp of the last job check."""
+    try:
+        jobs_data = load_json_file(JOBS_FILE)
+        last_check = jobs_data.get('last_check_time', 0)
+        return last_check
+    except Exception as e:
+        logger.error(f"Error getting last check time: {str(e)}")
+        return 0
 
 def main():
     # Initialize Flask app

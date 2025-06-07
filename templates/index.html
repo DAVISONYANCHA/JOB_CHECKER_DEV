@@ -1,122 +1,274 @@
 {% extends "base.html" %}
 
-{% block content %}
-<div class="container mt-4">
-    <h1>Job Checker Dashboard</h1>
-    
-    {% with messages = get_flashed_messages() %}
-        {% if messages %}
-            {% for message in messages %}
-                <div class="alert alert-info">{{ message }}</div>
-            {% endfor %}
-        {% endif %}
-    {% endwith %}
+{% block title %}Dashboard - Job Checker{% endblock %}
 
-    <div class="row mt-4">
+{% block content %}
+<div class="container">
+    <!-- Alert Container -->
+    <div id="alertContainer"></div>
+
+    <!-- Status Cards -->
+    <div class="row mb-4">
+        <!-- Health Status -->
         <div class="col-md-4">
-            <div class="card">
+            <div class="card h-100">
                 <div class="card-body">
-                    <h5 class="card-title">Manual Check</h5>
-                    <p class="card-text">Run a manual check for new jobs and updates.</p>
-                    <a href="{{ url_for('run_check') }}" class="btn btn-primary">Run Check Now</a>
+                    <h5 class="card-title">
+                        <i class="fas fa-heartbeat me-2"></i>System Status
+                    </h5>
+                    <div class="d-flex align-items-center mt-3">
+                        <div class="flex-shrink-0">
+                            <div class="status-indicator {% if health_status.status == 'healthy' %}bg-success{% else %}bg-danger{% endif %} rounded-circle" style="width: 20px; height: 20px;"></div>
+                        </div>
+                        <div class="flex-grow-1 ms-3">
+                            <h6 class="mb-0">{{ health_status.status|title }}</h6>
+                            <small class="text-muted">Last updated: {{ health_status.last_check }}</small>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
-        
+
+        <!-- Active Recipients -->
         <div class="col-md-4">
-            <div class="card">
+            <div class="card h-100">
                 <div class="card-body">
-                    <h5 class="card-title">Manage Recipients</h5>
-                    <p class="card-text">Add, edit, or remove email recipients.</p>
-                    <a href="{{ url_for('recipients') }}" class="btn btn-primary">Manage Recipients</a>
+                    <h5 class="card-title">
+                        <i class="fas fa-users me-2"></i>Active Recipients
+                    </h5>
+                    <div class="d-flex align-items-center mt-3">
+                        <div class="flex-shrink-0">
+                            <i class="fas fa-user-check fa-2x text-primary"></i>
+                        </div>
+                        <div class="flex-grow-1 ms-3">
+                            <h2 class="mb-0">{{ active_recipients }}</h2>
+                            <small class="text-muted">out of {{ health_status.recipients_count }} total</small>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
-        
+
+        <!-- Last Check -->
         <div class="col-md-4">
-            <div class="card">
+            <div class="card h-100">
                 <div class="card-body">
-                    <h5 class="card-title">Test Email</h5>
-                    <p class="card-text">Send a test email to verify notifications.</p>
-                    <a href="{{ url_for('test_email') }}" class="btn btn-primary">Send Test Email</a>
+                    <h5 class="card-title">
+                        <i class="fas fa-clock me-2"></i>Last Check
+                    </h5>
+                    <div class="d-flex align-items-center mt-3">
+                        <div class="flex-shrink-0">
+                            <i class="fas fa-history fa-2x text-warning"></i>
+                        </div>
+                        <div class="flex-grow-1 ms-3">
+                            <h6 class="mb-0">{{ last_check }}</h6>
+                            <small class="text-muted">Last job check time</small>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="row mt-4">
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-body">
-                    <h5 class="card-title">Browser Settings</h5>
-                    <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" id="headlessMode" onchange="toggleHeadlessMode(this)">
-                        <label class="form-check-label" for="headlessMode">Headless Mode</label>
-                    </div>
-                    <small class="form-text text-muted">When enabled, the browser runs in the background. When disabled, you can see the browser window.</small>
-                </div>
+    <!-- Actions Card -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="card-title mb-0">Actions</h5>
+        </div>
+        <div class="card-body">
+            <div class="d-flex gap-3">
+                <button class="btn btn-primary" onclick="runCheck()" id="runCheckBtn">
+                    <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                    <i class="fas fa-sync-alt me-2"></i>Run Check
+                </button>
+                <button class="btn btn-warning" onclick="testAllNotifications()" id="testNotificationsBtn">
+                    <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                    <i class="fas fa-bell me-2"></i>Test All Notifications
+                </button>
             </div>
         </div>
+    </div>
 
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-body">
-                    <h5 class="card-title">System Logs</h5>
-                    <p class="card-text">View the system logs to monitor job checks and notifications.</p>
-                    <a href="{{ url_for('view_logs') }}" class="btn btn-primary">View Logs</a>
-                </div>
+    <!-- Recent Recipients -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="card-title mb-0">Recent Recipients</h5>
+            <a href="{{ url_for('recipients') }}" class="btn btn-sm btn-primary">
+                <i class="fas fa-users me-1"></i>Manage Recipients
+            </a>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Channels</th>
+                            <th>Notifications</th>
+                            <th>Delay</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for recipient in recipients[:5] %}
+                        <tr>
+                            <td>{{ recipient.email }}</td>
+                            <td>
+                                {% if recipient.use_email %}<span class="badge bg-success">Email</span>{% endif %}
+                                {% if recipient.use_telegram %}<span class="badge bg-info">Telegram</span>{% endif %}
+                            </td>
+                            <td>
+                                {% if recipient.notify_new %}<span class="badge bg-primary">New</span>{% endif %}
+                                {% if recipient.notify_reopened %}<span class="badge bg-warning">Reopened</span>{% endif %}
+                                {% if recipient.notify_spotfreed %}<span class="badge bg-info">Freed</span>{% endif %}
+                            </td>
+                            <td>{{ recipient.delay }} min</td>
+                            <td>
+                                <div class="btn-group">
+                                    <button class="btn btn-sm btn-warning" onclick="testRecipient('{{ recipient.email }}')">
+                                        <i class="fas fa-bell"></i>
+                                    </button>
+                                    <a href="{{ url_for('edit_recipient_route', email=recipient.email) }}" class="btn btn-sm btn-primary">
+                                        <i class="fas fa-edit"></i>
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
 </div>
 
 <script>
-window.toggleHeadlessMode = function(checkbox) {
-    fetch('/toggle_headless', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.status === 'success') {
-            alert('Browser mode updated successfully!');
-        } else {
-            alert('Error updating browser mode: ' + data.message);
-            checkbox.checked = !checkbox.checked;  // Revert the checkbox
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('Error updating browser mode. Please try again.');
-        checkbox.checked = !checkbox.checked;  // Revert the checkbox
-    });
+// Utility Functions
+function showAlert(message, type = 'info') {
+    const alertContainer = document.getElementById('alertContainer');
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type} alert-dismissible fade show`;
+    alert.role = 'alert';
+    alert.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+    alertContainer.appendChild(alert);
+    setTimeout(() => alert.remove(), 5000);
 }
 
-// Connection monitoring
-function checkConnection() {
-    fetch('/health')
+function setLoading(button, isLoading) {
+    const spinner = button.querySelector('.spinner-border');
+    if (isLoading) {
+        button.disabled = true;
+        spinner.classList.remove('d-none');
+    } else {
+        button.disabled = false;
+        spinner.classList.add('d-none');
+    }
+}
+
+// Action Handlers
+async function runCheck() {
+    const button = document.getElementById('runCheckBtn');
+    setLoading(button, true);
+
+    try {
+        const response = await fetch("{{ url_for('run_check_route') }}");
+        const data = await response.json();
+        
+        if (response.ok && data.status === 'success') {
+            showAlert('Job check started successfully!', 'success');
+        } else {
+            showAlert(data.message || 'Error starting job check', 'danger');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showAlert('Error starting job check. Please try again.', 'danger');
+    } finally {
+        setLoading(button, false);
+    }
+}
+
+async function testAllNotifications() {
+    if (!confirm('This will send test notifications to all recipients. Continue?')) {
+        return;
+    }
+
+    const button = document.getElementById('testNotificationsBtn');
+    setLoading(button, true);
+
+    try {
+        const response = await fetch("{{ url_for('test_notifications_route') }}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+        if (response.ok && data.status === 'success') {
+            showAlert('Test notifications sent successfully!', 'success');
+        } else {
+            showAlert(data.message || 'Error sending test notifications', 'danger');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showAlert('Error sending test notifications. Please try again.', 'danger');
+    } finally {
+        setLoading(button, false);
+    }
+}
+
+async function testRecipient(email) {
+    if (!confirm(`Send test notifications to ${email}?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`{{ url_for('test_recipient_route', email='') }}${email}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+        if (response.ok && data.status === 'success') {
+            showAlert('Test notification sent successfully!', 'success');
+        } else {
+            showAlert(data.message || 'Error sending test notification', 'danger');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showAlert('Error sending test notification. Please try again.', 'danger');
+    }
+}
+
+// Health Check
+function updateHealthStatus() {
+    fetch("{{ url_for('health_check') }}")
         .then(response => response.json())
         .then(data => {
             if (data.status === 'healthy') {
-                console.log('Connection healthy:', data);
+                document.querySelector('.status-indicator').classList.remove('bg-danger');
+                document.querySelector('.status-indicator').classList.add('bg-success');
             } else {
-                console.error('Connection issue detected:', data);
+                document.querySelector('.status-indicator').classList.remove('bg-success');
+                document.querySelector('.status-indicator').classList.add('bg-danger');
             }
         })
         .catch(error => {
-            console.error('Connection check failed:', error);
+            console.error('Error checking health:', error);
         });
 }
 
-// Check connection every 30 seconds
-setInterval(checkConnection, 30000);
-
-// Add connection status div to the page
-const statusDiv = document.createElement('div');
-statusDiv.id = 'connection-status';
-statusDiv.style.display = 'none';
-document.body.insertBefore(statusDiv, document.body.firstChild);
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    // Update health status every 30 seconds
+    setInterval(updateHealthStatus, 30000);
+});
 </script>
 {% endblock %}

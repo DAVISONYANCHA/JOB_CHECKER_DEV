@@ -1,315 +1,359 @@
-from flask import Flask, render_template, redirect, url_for, flash, request, jsonify, Response
-from checker import check_jobs, send_email, get_recipients, add_recipient, remove_recipient, update_recipient, send_telegram_message
-import logging
+from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
+from flask_cors import CORS
+import json
 import os
-from dotenv import load_dotenv
-import atexit
-import codecs
-import subprocess
-import shutil
-from pathlib import Path
+import logging
+from datetime import datetime
 import threading
 import time
-import json
-
-def setup_onedrive_logs():
-    """Setup real-time log copying to OneDrive"""
-    try:
-        # Get OneDrive path
-        onedrive_path = Path.home() / "OneDrive"
-        if not onedrive_path.exists():
-            logger.error("OneDrive folder not found")
-            return False
-            
-        # Create logs directory in OneDrive
-        onedrive_logs = onedrive_path / "JobCheckerLogs"
-        onedrive_logs.mkdir(exist_ok=True)
-        
-        # Setup log copying
-        def copy_logs():
-            while True:
-                try:
-                    # Copy job_checker.log
-                    if os.path.exists('job_checker.log'):
-                        shutil.copy2('job_checker.log', onedrive_logs / 'job_checker.log')
-                    
-                    # Copy app.log
-                    if os.path.exists('app.log'):
-                        shutil.copy2('app.log', onedrive_logs / 'app.log')
-                        
-                    time.sleep(5)  # Copy every 5 seconds
-                except Exception as e:
-                    logger.error(f"Error copying logs to OneDrive: {str(e)}")
-                    time.sleep(30)  # Wait longer if there's an error
-        
-        # Start the copying thread
-        copy_thread = threading.Thread(target=copy_logs, daemon=True)
-        copy_thread.start()
-        logger.info(f"Started copying logs to {onedrive_logs}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to setup OneDrive logs: {str(e)}")
-        return False
-
-# Load environment variables
-load_dotenv()
+import secrets
+from checker import (
+    check_jobs,
+    get_recipients,
+    add_recipient,
+    remove_recipient,
+    update_recipient,
+    toggle_job_links,
+    send_notifications,
+    get_last_check_time,
+    send_email,
+    send_telegram_message
+)
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('app.log', mode='a', encoding='utf-8'),
+        logging.FileHandler('app.log'),
         logging.StreamHandler()
     ]
 )
-
 logger = logging.getLogger(__name__)
 
-# Add a test log message
-logger.info("Application started - Logging initialized")
-
-# Setup OneDrive logs
-setup_onedrive_logs()
+# Load secret key from environment variable or generate a new one
+SECRET_KEY = os.environ.get('FLASK_SECRET_KEY')
+if not SECRET_KEY:
+    SECRET_KEY = secrets.token_hex(32)
+    logger.warning("No FLASK_SECRET_KEY found in environment. Generated a new one. "
+                  "For production, set FLASK_SECRET_KEY environment variable.")
 
 app = Flask(__name__)
-app.secret_key = os.getenv('FLASK_SECRET_KEY', 'your-secret-key-here')
+CORS(app)
+app.secret_key = SECRET_KEY
 
-# Global variable to store headless mode state
-headless_mode = False  # Start with headless mode disabled
+# Global variables
+is_checking = False
+check_thread = None
+last_check_time = None
+last_check_status = None
+last_check_error = None
+
+def run_check():
+    global is_checking, last_check_time, last_check_status, last_check_error
+    try:
+        is_checking = True
+        last_check_time = datetime.now()
+        last_check_status = "running"
+        last_check_error = None
+        
+        # Run the check
+        check_jobs()
+        
+        # Update status
+        last_check_status = "success"
+        logger.info("Job check completed successfully")
+    except Exception as e:
+        last_check_status = "error"
+        last_check_error = str(e)
+        logger.error(f"Error during job check: {str(e)}")
+    finally:
+        is_checking = False
+
+def get_health_status():
+    """Get the current health status of the application."""
+    try:
+        return {
+            'status': 'healthy' if not is_checking else 'checking',
+            'last_check': last_check_time,
+            'last_status': last_check_status,
+            'last_error': last_check_error
+        }
+    except Exception as e:
+        logger.error(f"Error getting health status: {str(e)}")
+        return {
+            'status': 'error',
+            'error': str(e)
+        }
+
+def get_active_recipients_count():
+    """Get the count of active recipients."""
+    try:
+        recipients = get_recipients()
+        return len([r for r in recipients if r.get('notify_new') or r.get('notify_reopened') or r.get('notify_spotfreed')])
+    except Exception as e:
+        logger.error(f"Error getting active recipients count: {str(e)}")
+        return 0
 
 @app.route('/')
 def index():
-    return render_template('index.html')
-
-@app.route('/run_check')
-def run_check():
     try:
-        check_jobs(headless=headless_mode)
-        flash('Job check completed successfully!')
+        # Get all required data
+        health_status = get_health_status()
+        last_check = get_last_check_time()
+        active_recipients = get_active_recipients_count()
+        recipients = get_recipients()
+        
+        return render_template('index.html',
+                             health_status=health_status,
+                             last_check=last_check,
+                             active_recipients=active_recipients,
+                             recipients=recipients)
     except Exception as e:
-        flash(f'Error running job check: {str(e)}')
-    return redirect(url_for('index'))
+        logger.error(f"Error in index route: {str(e)}")
+        return render_template('500.html', error=str(e)), 500
 
 @app.route('/recipients')
 def recipients():
-    print("ROUTE /recipients CALLED")
-    recs = get_recipients()
-    print("DEBUG RECIPIENTS:", recs)
-    return render_template('recipients2.html', recipients=recs)
+    try:
+        recipients = get_recipients()
+        return render_template('recipients.html', recipients=recipients)
+    except Exception as e:
+        logger.error(f"Error in recipients route: {str(e)}")
+        return render_template('500.html', error=str(e)), 500
+
+@app.route('/edit_recipient/<email>', methods=['GET', 'POST'])
+def edit_recipient_route(email):
+    try:
+        if request.method == 'GET':
+            # Get recipient details
+            recipients = get_recipients()
+            recipient = next((r for r in recipients if r['email'] == email), None)
+            
+            if not recipient:
+                flash('Recipient not found.', 'error')
+                return redirect(url_for('recipients'))
+            
+            return render_template('edit_recipient.html', recipient=recipient)
+        
+        # Handle POST request
+        telegram_id = request.form.get('telegram_id')
+        delay = int(request.form.get('delay', 0))
+        notify_new = 'notify_new' in request.form
+        notify_reopened = 'notify_reopened' in request.form
+        notify_spotfreed = 'notify_spotfreed' in request.form
+
+        success = update_recipient(
+            email=email,
+            telegram_id=telegram_id,
+            delay=delay,
+            notify_new=notify_new,
+            notify_reopened=notify_reopened,
+            notify_spotfreed=notify_spotfreed
+        )
+
+        if success:
+            flash('Recipient updated successfully!', 'success')
+        else:
+            flash('Failed to update recipient.', 'error')
+
+        return redirect(url_for('recipients'))
+
+    except Exception as e:
+        logger.error(f"Error in edit_recipient_route: {str(e)}")
+        flash('An error occurred while updating the recipient.', 'error')
+        return redirect(url_for('recipients'))
 
 @app.route('/add_recipient', methods=['POST'])
 def add_recipient_route():
     try:
         email = request.form.get('email')
-        telegram_chat_id = request.form.get('telegram_chat_id')
+        telegram_id = request.form.get('telegram_id')
+        delay = int(request.form.get('delay', 0))
         notify_new = 'notify_new' in request.form
         notify_reopened = 'notify_reopened' in request.form
         notify_spotfreed = 'notify_spotfreed' in request.form
-        use_telegram = 'use_telegram' in request.form
-        use_email = 'use_email' in request.form
-        delay = int(request.form.get('delay', 0))
 
-        # Validate email
-        if not email or '@' not in email:
-            return jsonify({'status': 'error', 'message': 'Invalid email address'}), 400
+        success = add_recipient(
+            email=email,
+            telegram_id=telegram_id,
+            delay=delay,
+            notify_new=notify_new,
+            notify_reopened=notify_reopened,
+            notify_spotfreed=notify_spotfreed
+        )
 
-        # Validate Telegram ID if using Telegram
-        if use_telegram and not telegram_chat_id:
-            return jsonify({'status': 'error', 'message': 'Telegram Chat ID is required when using Telegram'}), 400
+        if success:
+            flash('Recipient added successfully!', 'success')
+        else:
+            flash('Failed to add recipient. Email might already exist.', 'error')
 
-        # Add recipient
-        add_recipient(email, telegram_chat_id, notify_new, notify_reopened, notify_spotfreed, 
-                     use_telegram, use_email, delay)
-        
-        return jsonify({'status': 'success', 'message': 'Recipient added successfully'})
+        return redirect(url_for('recipients'))
+
     except Exception as e:
-        logger.error(f"Error adding recipient: {str(e)}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        logger.error(f"Error in add_recipient_route: {str(e)}")
+        flash('An error occurred while adding the recipient.', 'error')
+        return redirect(url_for('recipients'))
 
-@app.route('/update_recipient', methods=['POST'])
-def update_recipient_route():
-    try:
-        email = request.form.get('email')
-        telegram_chat_id = request.form.get('telegram_chat_id')
-        notify_new = 'notify_new' in request.form
-        notify_reopened = 'notify_reopened' in request.form
-        notify_spotfreed = 'notify_spotfreed' in request.form
-        use_telegram = 'use_telegram' in request.form
-        use_email = 'use_email' in request.form
-        delay = int(request.form.get('delay', 0))
-
-        # Validate email
-        if not email or '@' not in email:
-            return jsonify({'status': 'error', 'message': 'Invalid email address'}), 400
-
-        # Validate Telegram ID if using Telegram
-        if use_telegram and not telegram_chat_id:
-            return jsonify({'status': 'error', 'message': 'Telegram Chat ID is required when using Telegram'}), 400
-
-        # Update recipient
-        update_recipient(email, telegram_chat_id, notify_new, notify_reopened, notify_spotfreed, 
-                        use_telegram, use_email, delay)
-        
-        return jsonify({'status': 'success', 'message': 'Recipient updated successfully'})
-    except Exception as e:
-        logger.error(f"Error updating recipient: {str(e)}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/remove_recipient/<email>', methods=['GET'])
+@app.route('/remove_recipient/<email>')
 def remove_recipient_route(email):
     try:
-        remove_recipient(email)
-        return jsonify({'status': 'success', 'message': 'Recipient removed successfully'})
+        success = remove_recipient(email)
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': 'Recipient removed successfully'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Recipient not found or could not be removed'
+            }), 404
     except Exception as e:
-        logger.error(f"Error removing recipient: {str(e)}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        logger.error(f"Error in remove_recipient route: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
-@app.route('/edit_recipient/<email>', methods=['GET', 'POST'])
-def edit_recipient_route(email):
-    if request.method == 'POST':
-        try:
-            # Get all form fields with defaults
-            telegram_chat_id = request.form.get('telegram_chat_id', '')
-            delay = int(request.form.get('delay', 0))
-            notify_new = 'notify_new' in request.form
-            notify_reopened = 'notify_reopened' in request.form
-            notify_spotfreed = 'notify_spotfreed' in request.form
-            use_telegram = 'use_telegram' in request.form
-            use_email = 'use_email' in request.form
-
-            # Log the values for debugging
-            logger.info(f"Updating recipient {email} with values:")
-            logger.info(f"telegram_chat_id: {telegram_chat_id}")
-            logger.info(f"delay: {delay}")
-            logger.info(f"notify_new: {notify_new}")
-            logger.info(f"notify_reopened: {notify_reopened}")
-            logger.info(f"notify_spotfreed: {notify_spotfreed}")
-            logger.info(f"use_telegram: {use_telegram}")
-            logger.info(f"use_email: {use_email}")
-
-            update_recipient(
-                email=email,
-                telegram_chat_id=telegram_chat_id,
-                delay=delay,
-                notify_new=notify_new,
-                notify_reopened=notify_reopened,
-                notify_spotfreed=notify_spotfreed,
-                use_telegram=use_telegram,
-                use_email=use_email
-            )
-            flash('Recipient updated successfully!')
-            return redirect(url_for('recipients'))
-        except Exception as e:
-            logger.error(f"Error updating recipient {email}: {str(e)}")
-            flash(f'Error updating recipient: {str(e)}')
-    
+@app.route('/run_check')
+def run_check_route():
+    global check_thread
     try:
-        recipients = get_recipients()
-        recipient = next((r for r in recipients if r['email'] == email), None)
-        if recipient:
-            # Ensure all required fields exist with defaults
-            recipient.setdefault('notify_new', True)
-            recipient.setdefault('notify_reopened', True)
-            recipient.setdefault('notify_spotfreed', True)
-            recipient.setdefault('use_telegram', False)
-            recipient.setdefault('use_email', True)
-            recipient.setdefault('delay', 0)
-            recipient.setdefault('telegram_chat_id', '')
-            
-            return render_template('edit_recipient.html', recipient=recipient)
-        flash('Recipient not found!')
-        return redirect(url_for('recipients'))
-    except Exception as e:
-        logger.error(f"Error loading recipient {email}: {str(e)}")
-        flash(f'Error loading recipient: {str(e)}')
-        return redirect(url_for('recipients'))
+        if is_checking:
+            return jsonify({
+                'status': 'error',
+                'message': 'A check is already running'
+            }), 409
 
-@app.route('/test_email')
-def test_email():
-    try:
-        recipients = get_recipients()
-        if not recipients:
-            flash('No recipients configured!')
-            return redirect(url_for('index'))
+        check_thread = threading.Thread(target=run_check)
+        check_thread.start()
         
-        for recipient in recipients:
-            logger.info(f"TEST EMAIL - Would send to: {recipient['email']}")
-            send_email(
-                recipient['email'],
-                "Test Email from Job Checker",
-                "This is a test email from the Job Checker application."
-            )
-        flash('Test emails sent successfully!')
+        return jsonify({
+            'status': 'success',
+            'message': 'Job check started'
+        })
     except Exception as e:
-        flash(f'Error sending test emails: {str(e)}')
-    return redirect(url_for('index'))
+        logger.error(f"Error in run_check route: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
-@app.route('/test_telegram')
-def test_telegram():
-    try:
-        recipients = get_recipients()
-        if not recipients:
-            flash('No recipients configured!')
-            return redirect(url_for('index'))
-        
-        for recipient in recipients:
-            if recipient.get('use_telegram') and recipient.get('telegram_chat_id'):
-                logger.info(f"TEST TELEGRAM - Would send to: {recipient['telegram_chat_id']}")
-                send_telegram_message(
-                    recipient['telegram_chat_id'],
-                    "This is a test message from the Job Checker application."
-                )
-        flash('Test Telegram messages sent successfully!')
-    except Exception as e:
-        flash(f'Error sending test Telegram messages: {str(e)}')
-    return redirect(url_for('index'))
-
-@app.route('/toggle_headless', methods=['POST'])
-def toggle_headless():
-    global headless_mode
-    headless_mode = not headless_mode
-    logger.info(f"Headless mode {'enabled' if headless_mode else 'disabled'}")
-    return jsonify({'status': 'success', 'headless': headless_mode})
-
-@app.route('/health')
+@app.route('/health_check')
 def health_check():
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': time.time()
-    })
-
-@app.after_request
-def add_header(response):
-    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-    response.headers['Pragma'] = 'no-cache'
-    response.headers['Expires'] = '0'
-    return response
-
-@app.route('/logs')
-def view_logs():
-    def read_log_file(filename):
-        try:
-            with open(filename, 'r', encoding='utf-8') as f:
-                return f.read()
-        except Exception as e:
-            return f"Error reading log file: {str(e)}"
-
-    job_checker_log = read_log_file('job_checker.log')
-    app_log = read_log_file('app.log')
-    
-    return render_template('logs.html', 
-                         job_checker_log=job_checker_log,
-                         app_log=app_log)
+    try:
+        health_status = get_health_status()
+        return jsonify(health_status)
+    except Exception as e:
+        logger.error(f"Error in health_check route: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 @app.route('/get_recipients')
 def get_recipients_route():
-    return jsonify(get_recipients())
+    try:
+        recipients = get_recipients()
+        return jsonify(recipients)
+    except Exception as e:
+        logger.error(f"Error in get_recipients route: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
-def cleanup():
-    logger.info("Application shutting down...")
+@app.route('/test_recipient/<email>', methods=['POST'])
+def test_recipient_route(email):
+    try:
+        # Get recipient details
+        recipients = get_recipients()
+        recipient = next((r for r in recipients if r['email'] == email), None)
+        
+        if not recipient:
+            return jsonify({
+                'status': 'error',
+                'message': 'Recipient not found'
+            }), 404
 
-atexit.register(cleanup)
+        # Send test notification
+        if recipient.get('use_telegram') and recipient.get('telegram_id'):
+            send_telegram_message(
+                recipient['telegram_id'],
+                "🔔 Test notification from Job Checker\n\nThis is a test message to verify your notification settings."
+            )
+        
+        if recipient.get('use_email'):
+            send_email(
+                recipient['email'],
+                "Test Notification - Job Checker",
+                "This is a test message to verify your notification settings."
+            )
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Test notification sent successfully'
+        })
+
+    except Exception as e:
+        logger.error(f"Error in test_recipient_route: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/test_notifications', methods=['POST'])
+def test_notifications_route():
+    try:
+        success = test_all_notifications()
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': 'Test notifications sent successfully'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to send test notifications'
+            }), 500
+    except Exception as e:
+        logger.error(f"Error in test_notifications route: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/toggle_job_links/<email>', methods=['POST'])
+def toggle_job_links_route(email):
+    try:
+        should_receive = request.json.get('should_receive', True)
+        success = toggle_job_links(email, should_receive)
+        
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': 'Job links preference updated successfully'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to update job links preference'
+            }), 400
+    except Exception as e:
+        logger.error(f"Error in toggle_job_links_route: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.errorhandler(404)
+def not_found_error(error):
+    return render_template('404.html'), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return render_template('500.html', error=str(error)), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

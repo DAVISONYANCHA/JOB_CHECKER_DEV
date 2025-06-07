@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 
+{% block title %}Manage Recipients{% endblock %}
+
 {% block content %}
 <div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
@@ -193,7 +195,7 @@ async function handleAddRecipient(event) {
 
     try {
         const formData = new FormData(form);
-        const response = await fetch('/add_recipient', {
+        const response = await fetch("{{ url_for('add_recipient_route') }}", {
             method: 'POST',
             body: formData
         });
@@ -203,7 +205,7 @@ async function handleAddRecipient(event) {
             form.reset();
             
             // Fetch updated recipients list
-            const recipientsResponse = await fetch('/get_recipients');
+            const recipientsResponse = await fetch("{{ url_for('get_recipients_route') }}");
             const recipients = await recipientsResponse.json();
             
             // Update the table
@@ -226,21 +228,25 @@ async function handleRemoveRecipient(email) {
     }
 
     try {
-        const response = await fetch(`/remove_recipient/${email}`, {
-            method: 'GET'
+        const response = await fetch(`{{ url_for('remove_recipient_route', email='') }}${email}`, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json'
+            }
         });
 
-        if (response.ok) {
+        const data = await response.json();
+        
+        if (response.ok && data.status === 'success') {
             showAlert('Recipient removed successfully!', 'success');
             
             // Fetch updated recipients list
-            const recipientsResponse = await fetch('/get_recipients');
+            const recipientsResponse = await fetch("{{ url_for('get_recipients_route') }}");
             const recipients = await recipientsResponse.json();
             
             // Update the table
             updateRecipientsTable(recipients);
         } else {
-            const data = await response.json();
             showAlert(data.message || 'Error removing recipient', 'danger');
         }
     } catch (error) {
@@ -280,7 +286,7 @@ function updateRecipientsTable(recipients) {
                 </div>
             </td>
             <td>
-                <a href="/edit_recipient/${recipient.email}" class="btn btn-sm btn-primary">Edit</a>
+                <a href="{{ url_for('edit_recipient_route', email='') }}${recipient.email}" class="btn btn-sm btn-primary">Edit</a>
                 <button class="btn btn-sm btn-danger" onclick="handleRemoveRecipient('${recipient.email}')">Remove</button>
                 <button class="btn btn-sm btn-warning" onclick="testRecipient('${recipient.email}')">Test</button>
             </td>
@@ -299,7 +305,7 @@ function attachToggleListeners() {
             const shouldReceive = this.checked;
             
             try {
-                const response = await fetch(`/toggle_ngrok_notifications/${email}`, {
+                const response = await fetch(`{{ url_for('toggle_ngrok_notifications', email='') }}${email}`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -310,7 +316,13 @@ function attachToggleListeners() {
                 });
 
                 const data = await response.json();
-                if (data.status !== 'success') {
+                if (data.status === 'success') {
+                    showAlert('Preferences updated successfully!', 'success');
+                    // Update the UI to reflect the change
+                    const recipientsResponse = await fetch("{{ url_for('get_recipients_route') }}");
+                    const recipients = await recipientsResponse.json();
+                    updateRecipientsTable(recipients);
+                } else {
                     showAlert('Error updating preferences: ' + data.message, 'danger');
                     this.checked = !shouldReceive;  // Revert the toggle
                 }
@@ -329,7 +341,7 @@ function attachToggleListeners() {
             const shouldReceive = this.checked;
             
             try {
-                const response = await fetch(`/toggle_job_links/${email}`, {
+                const response = await fetch(`{{ url_for('toggle_job_links', email='') }}${email}`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -340,7 +352,13 @@ function attachToggleListeners() {
                 });
 
                 const data = await response.json();
-                if (data.status !== 'success') {
+                if (data.status === 'success') {
+                    showAlert('Preferences updated successfully!', 'success');
+                    // Update the UI to reflect the change
+                    const recipientsResponse = await fetch("{{ url_for('get_recipients_route') }}");
+                    const recipients = await recipientsResponse.json();
+                    updateRecipientsTable(recipients);
+                } else {
                     showAlert('Error updating preferences: ' + data.message, 'danger');
                     this.checked = !shouldReceive;  // Revert the toggle
                 }
@@ -362,7 +380,7 @@ window.testRecipient = async function(email) {
     }
 
     try {
-        const response = await fetch(`/test_recipient/${email}`, {
+        const response = await fetch(`{{ url_for('test_recipient', email='') }}${email}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -388,7 +406,7 @@ async function testNotifications() {
     }
 
     try {
-        const response = await fetch('/test_notifications', {
+        const response = await fetch("{{ url_for('test_notifications') }}", {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
