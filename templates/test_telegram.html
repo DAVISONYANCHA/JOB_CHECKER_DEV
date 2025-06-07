@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Test Telegram Notifications</h2>
+    
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for message in messages %}
+                <div class="alert alert-info">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <div class="card">
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('test_telegram') }}">
+                <div class="mb-3">
+                    <label for="chat_id" class="form-label">Telegram Chat ID</label>
+                    <input type="text" class="form-control" id="chat_id" name="chat_id" required
+                           placeholder="e.g., 123456789">
+                    <small class="form-text text-muted">Get this from @userinfobot on Telegram</small>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="message" class="form-label">Test Message</label>
+                    <textarea class="form-control" id="message" name="message" rows="3">🔔 Test message from Job Checker!</textarea>
+                </div>
+                
+                <button type="submit" class="btn btn-primary">Send Test Message</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %} 

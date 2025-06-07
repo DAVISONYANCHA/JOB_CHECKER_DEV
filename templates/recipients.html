@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Manage Recipients</h2>
+        <button class="btn btn-warning" onclick="testNotifications()">Test Notifications</button>
+    </div>
+    
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for message in messages %}
+                <div class="alert alert-info">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Add New Recipient</h5>
+            <form method="POST" action="{{ url_for('add_recipient_route') }}">
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="email" class="form-label">Email Address</label>
+                        <input type="email" class="form-control" id="email" name="email" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="telegram_chat_id" class="form-label">Telegram Chat ID (Optional)</label>
+                        <input type="text" class="form-control" id="telegram_chat_id" name="telegram_chat_id">
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Notification Preferences</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="notify_new" name="notify_new" checked>
+                            <label class="form-check-label" for="notify_new">New Jobs</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="notify_reopened" name="notify_reopened" checked>
+                            <label class="form-check-label" for="notify_reopened">Reopened Jobs</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="notify_spotfreed" name="notify_spotfreed" checked>
+                            <label class="form-check-label" for="notify_spotfreed">Freed Spots</label>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Notification Method</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="use_telegram" name="use_telegram">
+                            <label class="form-check-label" for="use_telegram">Use Telegram</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="use_email" name="use_email" checked>
+                            <label class="form-check-label" for="use_email">Use Email</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="receive_ngrok_url" name="receive_ngrok_url" checked>
+                            <label class="form-check-label" for="receive_ngrok_url">Receive Ngrok URLs</label>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="receive_job_links" name="receive_job_links" checked>
+                            <label class="form-check-label" for="receive_job_links">Include Job Links in Notifications</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="delay" class="form-label">Notification Delay (minutes)</label>
+                    <input type="number" class="form-control" id="delay" name="delay" value="0" min="0">
+                    <small class="form-text text-muted">Delay all notifications (email and Telegram) by this many minutes</small>
+                </div>
+                
+                <button type="submit" class="btn btn-primary">Add Recipient</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <h5 class="card-title">Current Recipients</h5>
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Telegram</th>
+                            <th>Notifications</th>
+                            <th>Delay</th>
+                            <th>Ngrok URL</th>
+                            <th>Job Links</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for recipient in recipients %}
+                        <tr>
+                            <td>{{ recipient.email }}</td>
+                            <td>
+                                {% if recipient.use_telegram %}
+                                    {{ recipient.telegram_chat_id }}
+                                {% else %}
+                                    Not used
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if recipient.notify_new %}
+                                    <span class="badge bg-primary">New</span>
+                                {% endif %}
+                                {% if recipient.notify_reopened %}
+                                    <span class="badge bg-warning">Reopened</span>
+                                {% endif %}
+                                {% if recipient.notify_spotfreed %}
+                                    <span class="badge bg-info">Freed</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ recipient.delay }} min</td>
+                            <td>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input ngrok-toggle" type="checkbox" 
+                                           data-email="{{ recipient.email }}"
+                                           {% if recipient.get('receive_ngrok_url', True) %}checked{% endif %}>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input job-links-toggle" type="checkbox" 
+                                           data-email="{{ recipient.email }}"
+                                           {% if recipient.get('receive_job_links', True) %}checked{% endif %}>
+                                </div>
+                            </td>
+                            <td>
+                                <a href="{{ url_for('edit_recipient', email=recipient.email) }}" class="btn btn-sm btn-primary">Edit</a>
+                                <a href="{{ url_for('remove_recipient', email=recipient.email) }}" class="btn btn-sm btn-danger" 
+                                   onclick="return confirm('Are you sure you want to remove this recipient?')">Remove</a>
+                                <button class="btn btn-sm btn-warning" onclick="testRecipient('{{ recipient.email }}')">Test</button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+window.testRecipient = function(email) {
+    if (confirm(`Send test notifications to ${email}?`)) {
+        fetch(`/test_recipient/${email}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.status === 'success') {
+                alert(data.message || 'Test notification sent!');
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error sending test notifications. Please check the server logs for details.');
+        });
+    }
+}
+window.testNotifications = function() {
+    if (confirm('This will send test notifications to all recipients. Continue?')) {
+        fetch('/test_notifications', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.status === 'success') {
+                alert('Test notifications sent successfully!');
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error sending test notifications. Please check the server logs for details.');
+        });
+    }
+}
+
+// Handle ngrok notification toggles
+document.querySelectorAll('.ngrok-toggle').forEach(toggle => {
+    toggle.addEventListener('change', function() {
+        const email = this.dataset.email;
+        const shouldReceive = this.checked;
+        
+        fetch(`/toggle_ngrok_notifications/${email}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                should_receive: shouldReceive
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status !== 'success') {
+                alert('Error updating preferences: ' + data.message);
+                this.checked = !shouldReceive;  // Revert the toggle
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error updating preferences. Please try again.');
+            this.checked = !shouldReceive;  // Revert the toggle
+        });
+    });
+});
+
+// Handle job links toggle
+document.querySelectorAll('.job-links-toggle').forEach(toggle => {
+    toggle.addEventListener('change', function() {
+        const email = this.dataset.email;
+        const shouldReceive = this.checked;
+        
+        fetch(`/toggle_job_links/${email}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                should_receive: shouldReceive
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status !== 'success') {
+                alert('Error updating preferences: ' + data.message);
+                this.checked = !shouldReceive;  // Revert the toggle
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error updating preferences. Please try again.');
+            this.checked = !shouldReceive;  // Revert the toggle
+        });
+    });
+});
+</script>
+{% endblock %}
+
+

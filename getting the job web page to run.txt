@@ -1,0 +1,10 @@
+To start the web interface from the command prompt (CMD), follow these steps:
+Open Command Prompt (CMD)
+Navigate to your project directory:
+Apply to run_job_chec...
+Run the Flask application:
+Apply to run_job_chec...
+Once you run these commands, you should see output indicating that Flask is running, and you can access the web interface by opening your browser and going to:
+Apply to run_job_chec...
+cd C:\Users\donya\Desktop\job_checker_web
+python app.py

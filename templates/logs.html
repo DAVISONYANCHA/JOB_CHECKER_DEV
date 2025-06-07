@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Job Checker Logs</h1>
+    
+    <div class="card mt-4">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="card-title">Recent Logs</h5>
+                <a href="{{ url_for('view_logs') }}" class="btn btn-primary">Refresh</a>
+            </div>
+            <div class="log-container" style="height: 600px; overflow-y: auto; background-color: #f8f9fa; padding: 1rem; font-family: monospace;">
+                {% for log in logs %}
+                    <div class="log-line">{{ log }}</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.log-container {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+.log-line {
+    margin: 0;
+    padding: 2px 0;
+    border-bottom: 1px solid #eee;
+}
+</style>
+
+<script>
+// Auto-scroll to bottom
+document.addEventListener('DOMContentLoaded', function() {
+    const logContainer = document.querySelector('.log-container');
+    logContainer.scrollTop = logContainer.scrollHeight;
+});
+</script>
+{% endblock %} 

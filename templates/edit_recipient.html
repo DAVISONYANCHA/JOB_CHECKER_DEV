@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Edit Recipient</h2>
+        <a href="{{ url_for('recipients_route') }}" class="btn btn-secondary">Back to Recipients</a>
+    </div>
+
+    <div id="alert-container">
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert alert-info alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <form id="editRecipientForm" onsubmit="return handleEditRecipient(event)">
+                <input type="hidden" name="email" value="{{ recipient.email }}">
+                
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="email" class="form-label">Email Address</label>
+                        <input type="email" class="form-control" id="email" value="{{ recipient.email }}" disabled>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="telegram_chat_id" class="form-label">Telegram Chat ID (Optional)</label>
+                        <input type="text" class="form-control" id="telegram_chat_id" name="telegram_chat_id" value="{{ recipient.telegram_chat_id or '' }}">
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="notify_new" name="notify_new" {% if recipient.notify_new %}checked{% endif %}>
+                            <label class="form-check-label" for="notify_new">Notify on New Jobs</label>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="notify_reopened" name="notify_reopened" {% if recipient.notify_reopened %}checked{% endif %}>
+                            <label class="form-check-label" for="notify_reopened">Notify on Reopened Jobs</label>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="notify_spotfreed" name="notify_spotfreed" {% if recipient.notify_spotfreed %}checked{% endif %}>
+                            <label class="form-check-label" for="notify_spotfreed">Notify on Freed Spots</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="use_telegram" name="use_telegram" {% if recipient.use_telegram %}checked{% endif %}>
+                            <label class="form-check-label" for="use_telegram">Use Telegram</label>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="use_email" name="use_email" {% if recipient.use_email %}checked{% endif %}>
+                            <label class="form-check-label" for="use_email">Use Email</label>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="receive_ngrok_url" name="receive_ngrok_url" {% if recipient.get('receive_ngrok_url', True) %}checked{% endif %}>
+                            <label class="form-check-label" for="receive_ngrok_url">Receive Ngrok URLs</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="receive_job_links" name="receive_job_links" {% if recipient.get('receive_job_links', True) %}checked{% endif %}>
+                            <label class="form-check-label" for="receive_job_links">Include Job Links</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="delay" class="form-label">Notification Delay (minutes)</label>
+                    <input type="number" class="form-control" id="delay" name="delay" value="{{ recipient.delay }}" min="0">
+                    <small class="form-text text-muted">Delay all notifications (email and Telegram) by this many minutes</small>
+                </div>
+                
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-primary" id="updateRecipientBtn">
+                        <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                        Update Recipient
+                    </button>
+                    <button type="button" class="btn btn-warning" onclick="testRecipient('{{ recipient.email }}')">Test Notifications</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+function showAlert(message, type = 'info') {
+    const alertContainer = document.getElementById('alert-container');
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type} alert-dismissible fade show`;
+    alert.role = 'alert';
+    alert.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    `;
+    alertContainer.appendChild(alert);
+    setTimeout(() => alert.remove(), 5000);
+}
+
+function setLoading(button, isLoading) {
+    const spinner = button.querySelector('.spinner-border');
+    if (isLoading) {
+        button.disabled = true;
+        spinner.classList.remove('d-none');
+    } else {
+        button.disabled = false;
+        spinner.classList.add('d-none');
+    }
+}
+
+async function handleEditRecipient(event) {
+    event.preventDefault();
+    const form = event.target;
+    const button = form.querySelector('button[type="submit"]');
+    setLoading(button, true);
+
+    try {
+        const formData = new FormData(form);
+        const response = await fetch('/update_recipient', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (response.ok) {
+            showAlert('Recipient updated successfully!', 'success');
+            // Redirect back to recipients page after a short delay
+            setTimeout(() => {
+                window.location.href = '/recipients';
+            }, 1500);
+        } else {
+            const data = await response.json();
+            showAlert(data.message || 'Error updating recipient', 'danger');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showAlert('Error updating recipient. Please try again.', 'danger');
+    } finally {
+        setLoading(button, false);
+    }
+}
+
+async function testRecipient(email) {
+    if (!confirm(`Send test notifications to ${email}?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/test_recipient/${email}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+        if (data.status === 'success') {
+            showAlert(data.message || 'Test notification sent!', 'success');
+        } else {
+            showAlert('Error: ' + data.message, 'danger');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showAlert('Error sending test notifications. Please check the server logs for details.', 'danger');
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,14 @@
+[
+  {
+    "email": "donyancha90@gmail.com",
+    "telegram_chat_id": "7573095160",
+    "notify_new": true,
+    "notify_reopened": true,
+    "notify_spotfreed": true,
+    "use_telegram": true,
+    "use_email": true,
+    "delay": 0,
+    "receive_ngrok_url": false,
+    "receive_job_links": true
+  }
+]

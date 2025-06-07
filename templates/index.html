@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Job Checker Dashboard</h1>
+    
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for message in messages %}
+                <div class="alert alert-info">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <div class="row mt-4">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Manual Check</h5>
+                    <p class="card-text">Run a manual check for new jobs and updates.</p>
+                    <a href="{{ url_for('run_check') }}" class="btn btn-primary">Run Check Now</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Manage Recipients</h5>
+                    <p class="card-text">Add, edit, or remove email recipients.</p>
+                    <a href="{{ url_for('recipients') }}" class="btn btn-primary">Manage Recipients</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Test Email</h5>
+                    <p class="card-text">Send a test email to verify notifications.</p>
+                    <a href="{{ url_for('test_email') }}" class="btn btn-primary">Send Test Email</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Browser Settings</h5>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="headlessMode" onchange="toggleHeadlessMode(this)">
+                        <label class="form-check-label" for="headlessMode">Headless Mode</label>
+                    </div>
+                    <small class="form-text text-muted">When enabled, the browser runs in the background. When disabled, you can see the browser window.</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">System Logs</h5>
+                    <p class="card-text">View the system logs to monitor job checks and notifications.</p>
+                    <a href="{{ url_for('view_logs') }}" class="btn btn-primary">View Logs</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+window.toggleHeadlessMode = function(checkbox) {
+    fetch('/toggle_headless', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            alert('Browser mode updated successfully!');
+        } else {
+            alert('Error updating browser mode: ' + data.message);
+            checkbox.checked = !checkbox.checked;  // Revert the checkbox
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error updating browser mode. Please try again.');
+        checkbox.checked = !checkbox.checked;  // Revert the checkbox
+    });
+}
+
+// Connection monitoring
+function checkConnection() {
+    fetch('/health')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'healthy') {
+                console.log('Connection healthy:', data);
+            } else {
+                console.error('Connection issue detected:', data);
+            }
+        })
+        .catch(error => {
+            console.error('Connection check failed:', error);
+        });
+}
+
+// Check connection every 30 seconds
+setInterval(checkConnection, 30000);
+
+// Add connection status div to the page
+const statusDiv = document.createElement('div');
+statusDiv.id = 'connection-status';
+statusDiv.style.display = 'none';
+document.body.insertBefore(statusDiv, document.body.firstChild);
+</script>
+{% endblock %}

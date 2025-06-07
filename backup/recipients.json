@@ -1,0 +1,32 @@
+[
+    {
+        "email": "donyancha90@gmail.com",
+        "telegram_chat_id": "7573095160",
+        "notify_new": true,
+        "notify_reopened": true,
+        "notify_spotfreed": true,
+        "use_telegram": true,
+        "use_email": true,
+        "delay": 0
+    },
+    {
+        "email": "sspot1447@gmail.com",
+        "telegram_chat_id": "5912589332",
+        "notify_new": true,
+        "notify_reopened": true,
+        "notify_spotfreed": true,
+        "use_telegram": true,
+        "use_email": true,
+        "delay": 0
+    },
+    {
+        "email": "gatirimas@gmail.com",
+        "telegram_chat_id": "7236277152",
+        "notify_new": true,
+        "notify_reopened": true,
+        "notify_spotfreed": true,
+        "use_telegram": true,
+        "use_email": true,
+        "delay": 0
+    }
+]
