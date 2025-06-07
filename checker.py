@@ -263,13 +263,37 @@ def scrape_jobs_detailed(headless=True):
                         return rows.map(row => {
                             const cells = Array.from(row.querySelectorAll('td'));
                             if (cells.length >= 6) {
+                                // Try to get job ID from React props or data attributes
+                                let jobId = null;
+                                
+                                // Check for data attributes
+                                const dataAttrs = row.getAttributeNames()
+                                    .filter(name => name.startsWith('data-'))
+                                    .reduce((obj, name) => {
+                                        obj[name] = row.getAttribute(name);
+                                        return obj;
+                                    }, {});
+                                
+                                // Check for React props
+                                const reactProps = Object.keys(row)
+                                    .filter(key => key.startsWith('__reactProps$'))
+                                    .map(key => row[key])
+                                    .find(props => props && props.jobId);
+                                
+                                if (reactProps && reactProps.jobId) {
+                                    jobId = reactProps.jobId;
+                                } else if (dataAttrs['data-job-id']) {
+                                    jobId = dataAttrs['data-job-id'];
+                                }
+                                
                                 return {
                                     title: cells[0].innerText.trim(),
                                     date: cells[1].innerText.trim(),
                                     time: cells[2].innerText.trim(),
                                     location: cells[3].innerText.trim(),
                                     profession: cells[4].innerText.trim(),
-                                    occupancy: cells[5].innerText.trim()
+                                    occupancy: cells[5].innerText.trim(),
+                                    jobId: jobId
                                 };
                             }
                             return null;
@@ -297,7 +321,8 @@ def scrape_jobs_detailed(headless=True):
                             'link': None,  # Will be set only for new jobs
                             'locked': 'locked' in job['occupancy'].lower(),
                             'filled': None,
-                            'capacity': None
+                            'capacity': None,
+                            'jobId': job.get('jobId')  # Store the job ID
                         }
                         
                         # Parse filled/capacity if available
@@ -312,7 +337,7 @@ def scrape_jobs_detailed(headless=True):
                         # Only get link for new jobs
                         if key not in seen_jobs:
                             logger.info(f"Getting link for new job: {job['title']}")
-                            link = get_job_link(page, job['title'])
+                            link = get_job_link(page, job['title'], job.get('jobId'))
                             logger.info(f"Got link for new job {job['title']}: {link}")
                             info['link'] = link
                         else:
@@ -335,17 +360,36 @@ def scrape_jobs_detailed(headless=True):
         logger.error(traceback.format_exc())
         return {}
 
-def get_job_link(page, title):
-    """Get the link for a specific job by its title."""
+def get_job_link(page, title, job_id=None):
+    """Get the link for a specific job by its title or job ID."""
     try:
-        # Find the row containing the job title
-        row = page.query_selector(f'//tr[.//td[contains(text(), "{title}")]]')
-        if not row:
+        # If we have a job ID, construct the URL directly
+        if job_id:
+            url = f'https://splendid.onsinch.com/react/position/{job_id}'
+            logger.info(f"Constructed URL from job ID: {url}")
+            return url
+            
+        # Otherwise, fall back to clicking the row
+        # Wait for the table to be loaded
+        page.wait_for_selector('tr.MuiTableRow-root.MuiTableRow-hover', timeout=30000)
+        
+        # Get all job rows
+        rows = page.query_selector_all('tr.MuiTableRow-root.MuiTableRow-hover')
+        
+        # Find the row with matching title
+        target_row = None
+        for row in rows:
+            cells = row.query_selector_all('td')
+            if cells and cells[0].inner_text().strip() == title:
+                target_row = row
+                break
+        
+        if not target_row:
             logger.warning(f"Could not find row for job: {title}")
             return None
             
         # Get the first cell (title cell)
-        title_cell = row.query_selector('td:first-child')
+        title_cell = target_row.query_selector('td:first-child')
         if not title_cell:
             logger.warning(f"Could not find title cell for job: {title}")
             return None
@@ -354,15 +398,36 @@ def get_job_link(page, title):
         title_cell.click()
         random_delay()
         
+        # Wait for URL to change and contain position ID
+        page.wait_for_url('**/position/*', timeout=5000)
+        
         # Get the current URL after clicking
         current_url = page.url
         if 'position/' in current_url:
+            # Extract the job ID from the URL
+            job_id = current_url.split('position/')[-1]
+            logger.info(f"Found job ID: {job_id} for job: {title}")
+            
+            # Go back to the position page with ignoreRating
+            page.goto('https://splendid.onsinch.com/react/position?ignoreRating=true')
+            random_delay()
+            
+            # Wait for the position page to load
+            page.wait_for_selector('div.MuiBox-root', timeout=30000)
+            
             return current_url
             
         logger.warning(f"Could not get link for job: {title}")
         return None
     except Exception as e:
         logger.error(f"Error getting link for job {title}: {str(e)}")
+        # Try to recover by going back to position page
+        try:
+            page.goto('https://splendid.onsinch.com/react/position?ignoreRating=true')
+            random_delay()
+            page.wait_for_selector('div.MuiBox-root', timeout=30000)
+        except:
+            pass
         return None
 
 def get_job_link_via_api(page, job_id):
