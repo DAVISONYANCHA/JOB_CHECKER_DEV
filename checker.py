@@ -40,11 +40,6 @@ PASSWORD = os.getenv("ONSINCH_PASSWORD")
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-print("DEBUG ONSINCH_EMAIL:", USERNAME)
-print("DEBUG ONSINCH_PASSWORD:", PASSWORD)
-print("DEBUG EMAIL_SENDER:", EMAIL_SENDER)
-print("DEBUG EMAIL_PASSWORD:", EMAIL_PASSWORD)
-print("DEBUG TELEGRAM_BOT_TOKEN:", TELEGRAM_BOT_TOKEN)
 
 JOBS_FILE = "jobs_seen.json"
 RECIPIENTS_FILE = "recipients.json"
@@ -681,7 +676,7 @@ def send_telegram_message(chat_id, message):
         
         # Telegram API endpoint
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        logger.info(f"Using API endpoint: {url}")
+        logger.info("Using Telegram API endpoint (token redacted)")
         
         # Prepare the message
         data = {
