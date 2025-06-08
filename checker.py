@@ -6,7 +6,9 @@ import logging
 import time
 import random
 import hashlib
-import msvcrt
+import sys
+if sys.platform == "win32":
+    import msvcrt
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
